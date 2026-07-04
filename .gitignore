@@ -1,0 +1,14 @@
+# Local VM media and state
+*.iso
+vm/
+snapshots/
+
+# Generated/downloaded transfer artifacts
+build/
+transfer/
+*.qcow2
+
+# Python and macOS noise
+__pycache__/
+*.py[cod]
+.DS_Store
