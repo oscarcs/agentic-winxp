@@ -1175,17 +1175,17 @@ static void fill_static_content(void)
         "on the left, the active thread in the middle, and environment context "
         "on the right.\r\n\r\n"
         "Added:\r\n"
-        "  * guest/xpagent-gui.c\r\n"
-        "  * guest/build-xpagent-gui.bat\r\n\r\n"
+        "  * guest/src/xpagent-gui.c\r\n"
+        "  * guest/assets/icons/svg/send.svg\r\n\r\n"
         "The real version can reuse AG1 networking while this window owns "
         "the transcript, prompt, task list, and environment panes.\r\n\r\n"
         "Next natural step: wire Send to the host gateway and append replies "
         "to this transcript.";
     SetWindowText(g_transcript, sample);
 
-    add_list_item(g_changes_list, "guest/README-XP.txt                 +7 -0");
-    add_list_item(g_changes_list, "guest/build-gui-hello.bat          +25 -0");
-    add_list_item(g_changes_list, "guest/gui-hello.c                 +155 -0");
+    add_list_item(g_changes_list, "guest/src/xpagent-gui.c          +305 -8");
+    add_list_item(g_changes_list, "guest/assets/icons/svg/send.svg   +15 -0");
+    add_list_item(g_changes_list, "scripts/render-icons.sh           +49 -0");
 
     add_list_item(g_env_list, "Changes                         +187 -0");
     add_list_item(g_env_list, "Local");

@@ -24,7 +24,11 @@ cp -R "$BUILD_DIR/_winapi/winapi-full-for-0.9.27/include/"* "$BUILD_DIR/tcc/incl
 rm -rf "$BUILD_DIR/_winapi"
 
 mkdir -p "$BUILD_DIR/agent"
-cp -R "$ROOT"/guest/. "$BUILD_DIR/agent/"
+cp "$ROOT"/guest/README-XP.txt "$BUILD_DIR/agent/"
+cp "$ROOT"/guest/build/*.bat "$BUILD_DIR/agent/"
+cp "$ROOT"/guest/startup/xpilot-startup.bat "$BUILD_DIR/agent/"
+cp -R "$ROOT"/guest/src "$BUILD_DIR/agent/src"
+cp -R "$ROOT"/guest/assets "$BUILD_DIR/agent/assets"
 perl -0pi -e 's/\r?\n/\r\n/g' "$BUILD_DIR"/agent/*.bat "$BUILD_DIR"/agent/README-XP.txt
 
 mkdir -p "$BUILD_DIR/portable"

@@ -5,16 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
 
 #ifndef CREATE_NO_WINDOW
 #define CREATE_NO_WINDOW 0x08000000
 #endif
 
-#define XPILOT_VERSION "0.3"
+#define XPILOT_VERSION "0.4"
 #define DEFAULT_TIMEOUT_MS 30000
 #define DEFAULT_MAX_OUTPUT (1024 * 1024)
 #define HARD_MAX_OUTPUT (4 * 1024 * 1024)
 #define MAX_FILE_SIZE (16 * 1024 * 1024)
+#define MAX_SCREENSHOT_SIZE (32 * 1024 * 1024)
 #define MAX_COMMAND_SIZE 16384
 
 struct buffer {
@@ -538,6 +540,124 @@ static void build_info(struct buffer *out)
     }
 }
 
+static int capture_screen_bmp(char **data, long *len, long *width_out,
+                              long *height_out)
+{
+    BITMAPFILEHEADER file_header;
+    BITMAPINFOHEADER info_header;
+    BITMAPINFO info;
+    HDC screen_dc = NULL;
+    HDC mem_dc = NULL;
+    HBITMAP bitmap = NULL;
+    HBITMAP old_bitmap = NULL;
+    DWORD row_bytes;
+    DWORD image_bytes;
+    DWORD header_bytes;
+    DWORD total_bytes;
+    char *buf = NULL;
+    int width;
+    int height;
+    int rc = 1;
+
+    *data = NULL;
+    *len = 0;
+    *width_out = 0;
+    *height_out = 0;
+
+    width = GetSystemMetrics(SM_CXSCREEN);
+    height = GetSystemMetrics(SM_CYSCREEN);
+    if (width <= 0 || height <= 0) {
+        return 1;
+    }
+
+    row_bytes = ((((DWORD)width * 3) + 3) / 4) * 4;
+    image_bytes = row_bytes * (DWORD)height;
+    header_bytes = sizeof(file_header) + sizeof(info_header);
+    total_bytes = header_bytes + image_bytes;
+    if (total_bytes < image_bytes || total_bytes > MAX_SCREENSHOT_SIZE ||
+        total_bytes > LONG_MAX) {
+        return 2;
+    }
+
+    buf = (char *)malloc(total_bytes);
+    if (!buf) {
+        return 1;
+    }
+
+    screen_dc = GetDC(NULL);
+    if (!screen_dc) {
+        goto done;
+    }
+    mem_dc = CreateCompatibleDC(screen_dc);
+    if (!mem_dc) {
+        goto done;
+    }
+    bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+    if (!bitmap) {
+        goto done;
+    }
+    old_bitmap = (HBITMAP)SelectObject(mem_dc, bitmap);
+    if (!old_bitmap) {
+        goto done;
+    }
+
+    if (!BitBlt(mem_dc, 0, 0, width, height, screen_dc, 0, 0, SRCCOPY)) {
+        goto done;
+    }
+    SelectObject(mem_dc, old_bitmap);
+    old_bitmap = NULL;
+
+    ZeroMemory(&info_header, sizeof(info_header));
+    info_header.biSize = sizeof(info_header);
+    info_header.biWidth = width;
+    info_header.biHeight = height;
+    info_header.biPlanes = 1;
+    info_header.biBitCount = 24;
+    info_header.biCompression = BI_RGB;
+    info_header.biSizeImage = image_bytes;
+
+    ZeroMemory(&info, sizeof(info));
+    info.bmiHeader = info_header;
+
+    if (!GetDIBits(screen_dc, bitmap, 0, height, buf + header_bytes, &info,
+                   DIB_RGB_COLORS)) {
+        goto done;
+    }
+
+    ZeroMemory(&file_header, sizeof(file_header));
+    file_header.bfType = 0x4d42;
+    file_header.bfOffBits = header_bytes;
+    file_header.bfSize = total_bytes;
+
+    memcpy(buf, &file_header, sizeof(file_header));
+    memcpy(buf + sizeof(file_header), &info_header, sizeof(info_header));
+
+    *data = buf;
+    *len = (long)total_bytes;
+    *width_out = width;
+    *height_out = height;
+    buf = NULL;
+    rc = 0;
+
+done:
+    if (old_bitmap) {
+        SelectObject(mem_dc, old_bitmap);
+    }
+    if (bitmap) {
+        DeleteObject(bitmap);
+    }
+    if (mem_dc) {
+        DeleteDC(mem_dc);
+    }
+    if (screen_dc) {
+        ReleaseDC(NULL, screen_dc);
+    }
+    if (buf) {
+        free(buf);
+    }
+    return rc;
+}
+
 static int handle_connection(SOCKET s)
 {
     char line[512];
@@ -552,6 +672,8 @@ static int handle_connection(SOCKET s)
     char *body2 = NULL;
     char *file_data = NULL;
     long file_len = 0;
+    long screen_width = 0;
+    long screen_height = 0;
     long exit_code;
     int rc;
     struct buffer output;
@@ -586,6 +708,27 @@ static int handle_connection(SOCKET s)
             build_info(&output);
             send_response(s, "OK", id, 0, output.data, output.len);
             buffer_free(&output);
+            continue;
+        }
+
+        if (strcmp(verb, "SCREEN") == 0) {
+            log_line("#%ld screen capture", id);
+            rc = capture_screen_bmp(&file_data, &file_len, &screen_width,
+                                    &screen_height);
+            if (rc == 0) {
+                log_line("#%ld screen captured %ldx%ld bytes=%ld", id,
+                         screen_width, screen_height, file_len);
+                send_response(s, "OK", id, 0, file_data, file_len);
+                free(file_data);
+                file_data = NULL;
+            } else if (rc == 2) {
+                log_line("#%ld screen capture too large", id);
+                send_response(s, "ERR", id, rc, "screen too large\r\n", 18);
+            } else {
+                log_line("#%ld screen capture failed error=%lu", id,
+                         GetLastError());
+                send_response(s, "ERR", id, rc, "cannot capture screen\r\n", 23);
+            }
             continue;
         }
 

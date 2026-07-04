@@ -5,14 +5,21 @@ Expected layout after extracting agent-kit.zip to C:\:
 
   C:\tcc
   C:\agent
+  C:\agent\src
+  C:\agent\assets
 
-Open Command Prompt, then run:
+Open Command Prompt, then run from C:\agent.
+
+Build and run the XP bridge:
 
   cd \agent
-  build-hello.bat
-  hello.exe
+  build-xpilot.bat
+  xpilot.exe
 
-Then test guest-to-host networking:
+Start xpilot_host.py on the Mac before running xpilot.exe in XP. The XP program
+connects out to 10.0.2.2:7778 and waits for RUN/GET/PUT commands.
+
+To test guest-to-host networking separately:
 
   build-netcheck.bat
   netcheck.exe
@@ -24,34 +31,18 @@ netcheck.exe connects to:
 If it prints "winxp host gateway ok", TCC, Winsock, QEMU networking, and the
 host gateway are all working.
 
-To test native Win32 GUI builds:
-
-  build-gui-hello.bat
-  start "" gui-hello.exe
-
-This opens a small XP window built with TinyCC, user32, and gdi32.
-
-To test the first blocked-out xpagent GUI shell:
+To test the xpagent GUI shell:
 
   build-xpagent-gui.bat
   start "" xpagent-gui.exe
 
-This is a static native Win32 layout prototype. Networking comes later.
+This is a native Win32 layout prototype with runtime icon assets loaded from
+C:\agent\assets.
 
-To capture the rendered XP desktop for visual checks:
+To capture the rendered XP desktop for visual checks, keep xpilot running and
+run this on the host:
 
-  build-capture-screen.bat
-  capture-screen.exe xp-screen.bmp
-
-Then fetch C:\agent\xp-screen.bmp from the host with xpilotctl.
-
-For interactive control from Codex/macOS, build and run xpilot:
-
-  build-xpilot.bat
-  xpilot.exe
-
-Start xpilot_host.py on the Mac before running xpilot.exe in XP. The XP program
-connects out to 10.0.2.2:7778 and waits for RUN/GET/PUT commands.
+  ./xpilotctl.py screenshot /tmp/xp-screen.bmp
 
 For upgrade builds while xpilot.exe is already running:
 
@@ -60,8 +51,9 @@ For upgrade builds while xpilot.exe is already running:
 xpilot supports command timeouts, persistent CWD, info/stat, append, larger file
 transfers, and the host-side xpilotctl.py shell.
 
-xpilot 0.3 also prints timestamped log lines in the XP console for connections,
-requests, commands, file transfers, cwd changes, stat calls, timeouts, and errors.
+xpilot prints timestamped log lines in the XP console for connections, requests,
+commands, file transfers, cwd changes, stat calls, screenshots, timeouts, and
+errors.
 
 To start xpilot whenever XP logs in, copy xpilot-startup.bat to:
 

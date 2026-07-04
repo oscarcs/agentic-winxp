@@ -12,9 +12,11 @@ This involves two parts:
 - `xpilot.exe` runs inside Windows XP and connects out to the host.
 - `xpilot_host.py` accepts the guest connection and exposes a local control API.
 - `xpilotctl.py` gives the host a small shell for XP command and file operations.
+- `xpilot` can capture the rendered XP desktop as a BMP through the same bridge.
 - TinyCC builds XP-side Win32/Winsock programs directly in the guest.
 - `xpilot.exe` can start automatically after XP login and prints timestamped logs.
-- `xpagent` now has a portable C core with both macOS and XP console adapters.
+- `xpagent` now has a portable C core with an XP console adapter and a native
+  Win32 GUI prototype.
 - The Codex-backed `xpagent` gateway can call XP tools through `xpilot`.
 
 ## Current Shape
@@ -65,35 +67,25 @@ Common commands:
 ./xpilotctl.py ls 'C:\agent'
 ./xpilotctl.py cat 'C:\agent\README-XP.txt'
 ./xpilotctl.py put ./local.c 'C:\agent\local.c'
-./xpilotctl.py get 'C:\agent\xpilot.c' /tmp/xpilot.c
+./xpilotctl.py get 'C:\agent\src\xpilot.c' /tmp/xpilot.c
+./xpilotctl.py screenshot /tmp/xp-screen.bmp
 ./xpilotctl.py putdir ./guest 'C:\agent\guest-copy'
 ./xpilotctl.py getdir 'C:\agent' /tmp/agent-copy
 ```
 
-## xpagent Local Test
+## xpagent
 
 `xpagent` is the XP-native agent shell experiment. It uses a portable C core and
-thin platform adapters.
-
-Build and test it locally on macOS:
-
-```sh
-./scripts/build-host-xpagent.sh
-./host/agent_gateway.py
-printf 'hello\n/quit\n' | ./build/host/xpagent
-```
-
-Use local Codex instead of the echo gateway:
+thin platform adapters. Start the host gateway on macOS:
 
 ```sh
 ./host/agent_gateway.py --backend codex
-./build/host/xpagent
 ```
 
 The gateway shells out to `codex exec` on the host and stores the Codex thread
 id in `.state/xpagent-codex-thread.txt`, so later `xpagent` runs can resume the
-same conversation. Use `--codex-new-session` to start over. XP still speaks only
-the small `AG1` protocol and never sees API keys or modern auth.
+same conversation. Use `--codex-new-session` to start over. XP speaks only the
+small `AG1` protocol and never sees API keys or modern auth.
 
 With `--backend codex`, the gateway can also let Codex operate XP through the
 existing `xpilot` bridge. Initial tools include `xp.run`, `xp.list_dir`,
@@ -116,6 +108,14 @@ The echo gateway is useful for offline protocol tests. The codex backend is the
 first real LLM wrapper. The XP console adapter converts command prompt text to
 UTF-8 before sending it to the host, then converts UTF-8 replies back to the XP
 console code page with a few common punctuation fallbacks.
+
+The Win32 GUI prototype is also built inside XP:
+
+```bat
+cd \agent
+build-xpagent-gui.bat
+start "" xpagent-gui.exe
+```
 
 ## Fresh VM Setup
 
@@ -184,9 +184,12 @@ C:\Documents and Settings\All Users\Start Menu\Programs\Startup
 
 ## Repository Layout
 
-- `guest/` - XP-side C source, batch files, tests, and startup wrapper.
+- `guest/src/` - XP-side C source.
+- `guest/build/` - batch wrappers packaged into `C:\agent`.
+- `guest/assets/` - GUI icon source and generated bitmap/icon assets.
+- `guest/startup/` - Startup-folder helper scripts.
 - `portable/` - platform-neutral `xpagent` core.
-- `host/` - host-side `xpagent` gateway and POSIX/macOS test adapter.
+- `host/` - host-side `xpagent` gateway.
 - `xpilot_host.py` - host bridge for the XP control connection.
 - `xpilotctl.py` - host CLI and interactive shell.
 - `scripts/` - QEMU, transfer, TinyCC download, and packaging helpers.

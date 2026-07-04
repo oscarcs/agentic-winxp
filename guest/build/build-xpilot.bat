@@ -3,7 +3,7 @@ set TCC=C:\tcc\tcc.exe
 set DEF=C:\tcc\lib\ws2_32.def
 set DLL=C:\WINDOWS\system32\ws2_32.dll
 set OUT=%1
-if "%OUT%"=="" set OUT=xpagent.exe
+if "%OUT%"=="" set OUT=xpilot.exe
 
 if not exist %TCC% goto missing_tcc
 
@@ -13,7 +13,7 @@ echo Creating %DEF%
 if errorlevel 1 goto failed
 
 :build
-%TCC% xpagent.c ..\portable\agent_core.c -I.. -o %OUT% -lws2_32
+%TCC% src\xpilot.c -o %OUT% -lws2_32 -luser32 -lgdi32
 if errorlevel 1 goto failed
 
 echo Built %OUT%

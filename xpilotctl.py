@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import http.client
 import os
 import shlex
 import subprocess
@@ -22,6 +23,8 @@ def request(api, method, path, data=None):
             return response.status, response.headers, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.headers, exc.read()
+    except http.client.RemoteDisconnected as exc:
+        return 599, {}, f"{exc}\n".encode("utf-8")
     except urllib.error.URLError as exc:
         return 599, {}, f"{exc}\n".encode("utf-8")
 
@@ -58,6 +61,10 @@ def api_get(api, xp_path):
     return request(api, "GET", f"/file?path={q(xp_path)}")
 
 
+def api_screenshot(api):
+    return request(api, "GET", "/screenshot")
+
+
 def api_put(api, xp_path, data, append=False):
     query = f"path={q(xp_path)}"
     if append:
@@ -92,8 +99,22 @@ def set_cwd(api, path):
     return status == 200
 
 
+def save_screenshot(api, local_path):
+    status, _, body = api_screenshot(api)
+    if status != 200:
+        sys.stderr.buffer.write(body)
+        return 1
+    if local_path == "-":
+        sys.stdout.buffer.write(body)
+        return 0
+    with open(local_path, "wb") as f:
+        f.write(body)
+    print(f"wrote {local_path}")
+    return 0
+
+
 def shell(api):
-    print("XPilot shell. Builtins: cd, pwd, ls, cat, get, put, edit, ping, info, exit")
+    print("XPilot shell. Builtins: cd, pwd, ls, cat, get, put, edit, screenshot, ping, info, exit")
     print("Use normal commands for everything else; they run through cmd.exe /C.")
     while True:
         cwd = get_cwd(api) or "?"
@@ -169,6 +190,10 @@ def shell(api):
                 print("usage: edit <xp-path>", file=sys.stderr)
                 continue
             edit_file(api, parts[1])
+            continue
+        if cmd in ("screenshot", "screen"):
+            local = parts[1] if len(parts) > 1 else "xp-screen.bmp"
+            save_screenshot(api, local)
             continue
         if cmd == "ping":
             status, _, body = request(api, "POST", "/ping", b"")
@@ -302,6 +327,9 @@ def main():
     stat = sub.add_parser("stat")
     stat.add_argument("xp_path")
 
+    screenshot = sub.add_parser("screenshot")
+    screenshot.add_argument("local_path", nargs="?", default="xp-screen.bmp")
+
     get = sub.add_parser("get")
     get.add_argument("xp_path")
     get.add_argument("local_path", nargs="?")
@@ -396,6 +424,9 @@ def main():
         status, _, body = api_text_get(api, f"/stat?path={q(args.xp_path)}")
         print_body(body)
         return 0 if status == 200 else 1
+
+    if args.cmd == "screenshot":
+        return save_screenshot(api, args.local_path)
 
     if args.cmd == "get":
         status, _, body = api_get(api, args.xp_path)

@@ -150,6 +150,9 @@ class AgentBridge:
     def info(self):
         return self.transact("INFO")
 
+    def screenshot(self):
+        return self.transact("SCREEN")
+
 
 class XPilotHandler(BaseHTTPRequestHandler):
     bridge = None
@@ -170,6 +173,10 @@ class XPilotHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/info":
             self.forward_text(lambda: self.bridge.info())
+            return
+
+        if parsed.path == "/screenshot":
+            self.forward_binary(lambda: self.bridge.screenshot(), "image/bmp")
             return
 
         if parsed.path == "/cwd":
@@ -262,14 +269,14 @@ class XPilotHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def forward_binary(self, callback):
+    def forward_binary(self, callback, content_type="application/octet-stream"):
         try:
             status, code, body = callback()
         except Exception as exc:
             self.send_bytes(503, f"{exc}\n".encode("utf-8"), "text/plain")
             return
         self.send_response(200 if status == "OK" else 500)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", content_type)
         self.send_header("X-XPilot-Status", status)
         self.send_header("X-XPilot-Code", str(code))
         self.send_header("Content-Length", str(len(body)))

@@ -9,6 +9,10 @@ transfer/
 *.qcow2
 .state/
 
+# Tracked XP batch wrappers live here despite the generic build/ ignore.
+!guest/build/
+!guest/build/*.bat
+
 # Python and macOS noise
 __pycache__/
 *.py[cod]
