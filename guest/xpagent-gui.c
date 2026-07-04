@@ -43,6 +43,30 @@ static HFONT g_small_font;
 static HBRUSH g_bg_brush;
 static HBRUSH g_header_brush;
 static HBRUSH g_white_brush;
+static HICON g_app_icon_big;
+static HICON g_app_icon_small;
+static HICON g_icon_new_chat;
+static HICON g_icon_search;
+static HICON g_icon_scheduled;
+static HICON g_icon_plugins;
+static HICON g_icon_add;
+static HICON g_icon_mic;
+static HICON g_icon_send;
+static HICON g_icon_file;
+static HICON g_icon_project_open;
+static HICON g_icon_project_closed;
+static HICON g_icon_badge;
+static HBITMAP g_bmp_new_chat;
+static HBITMAP g_bmp_search;
+static HBITMAP g_bmp_scheduled;
+static HBITMAP g_bmp_plugins;
+static HBITMAP g_bmp_add;
+static HBITMAP g_bmp_mic;
+static HBITMAP g_bmp_send;
+static HBITMAP g_bmp_file;
+static HBITMAP g_bmp_project_open;
+static HBITMAP g_bmp_project_closed;
+static HBITMAP g_bmp_badge;
 
 static HWND g_new_chat;
 static HWND g_search;
@@ -96,6 +120,133 @@ static HWND make_section_label(HWND parent, const char *text, int id)
     hwnd = make_control(parent, "STATIC", text, SS_OWNERDRAW, 0, id);
     set_font(hwnd, g_bold_font);
     return hwnd;
+}
+
+static void make_asset_path(char *out, const char *rel)
+{
+    char *slash;
+    char *p;
+
+    GetModuleFileName(NULL, out, MAX_PATH);
+    slash = NULL;
+    for (p = out; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            slash = p;
+        }
+    }
+    if (slash) {
+        slash[1] = 0;
+    } else {
+        out[0] = 0;
+    }
+    lstrcat(out, rel);
+}
+
+static HBITMAP load_bitmap_asset(const char *rel)
+{
+    char path[MAX_PATH];
+
+    make_asset_path(path, rel);
+    return (HBITMAP)LoadImage(NULL, path, IMAGE_BITMAP, 0, 0,
+                              LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+}
+
+static HICON load_icon_asset(const char *rel, int size)
+{
+    char path[MAX_PATH];
+
+    make_asset_path(path, rel);
+    return (HICON)LoadImage(NULL, path, IMAGE_ICON, size, size,
+                            LR_LOADFROMFILE | LR_DEFAULTCOLOR);
+}
+
+static void load_assets(void)
+{
+    g_bmp_new_chat = load_bitmap_asset("assets\\icons\\bmp\\new-chat.bmp");
+    g_bmp_search = load_bitmap_asset("assets\\icons\\bmp\\search.bmp");
+    g_bmp_scheduled = load_bitmap_asset("assets\\icons\\bmp\\scheduled.bmp");
+    g_bmp_plugins = load_bitmap_asset("assets\\icons\\bmp\\plugins.bmp");
+    g_bmp_add = load_bitmap_asset("assets\\icons\\bmp\\add.bmp");
+    g_bmp_mic = load_bitmap_asset("assets\\icons\\bmp\\mic.bmp");
+    g_bmp_send = load_bitmap_asset("assets\\icons\\bmp\\send.bmp");
+    g_bmp_file = load_bitmap_asset("assets\\icons\\bmp\\file.bmp");
+    g_bmp_project_open = load_bitmap_asset("assets\\icons\\bmp\\project-open.bmp");
+    g_bmp_project_closed = load_bitmap_asset("assets\\icons\\bmp\\project-closed.bmp");
+    g_bmp_badge = load_bitmap_asset("assets\\icons\\bmp\\xpagent-badge.bmp");
+    g_app_icon_big = load_icon_asset("assets\\icons\\ico\\xpagent.ico", 32);
+    g_app_icon_small = load_icon_asset("assets\\icons\\ico\\xpagent.ico", 16);
+    g_icon_new_chat = load_icon_asset("assets\\icons\\ico\\new-chat.ico", 16);
+    g_icon_search = load_icon_asset("assets\\icons\\ico\\search.ico", 16);
+    g_icon_scheduled = load_icon_asset("assets\\icons\\ico\\scheduled.ico", 16);
+    g_icon_plugins = load_icon_asset("assets\\icons\\ico\\plugins.ico", 16);
+    g_icon_add = load_icon_asset("assets\\icons\\ico\\add.ico", 16);
+    g_icon_mic = load_icon_asset("assets\\icons\\ico\\mic.ico", 16);
+    g_icon_send = load_icon_asset("assets\\icons\\ico\\send.ico", 16);
+    g_icon_file = load_icon_asset("assets\\icons\\ico\\file.ico", 16);
+    g_icon_project_open = load_icon_asset("assets\\icons\\ico\\project-open.ico", 16);
+    g_icon_project_closed = load_icon_asset("assets\\icons\\ico\\project-closed.ico", 16);
+    g_icon_badge = load_icon_asset("assets\\icons\\ico\\xpagent-badge.ico", 32);
+}
+
+static void delete_bitmap(HBITMAP bitmap)
+{
+    if (bitmap) {
+        DeleteObject(bitmap);
+    }
+}
+
+static void cleanup_assets(void)
+{
+    delete_bitmap(g_bmp_new_chat);
+    delete_bitmap(g_bmp_search);
+    delete_bitmap(g_bmp_scheduled);
+    delete_bitmap(g_bmp_plugins);
+    delete_bitmap(g_bmp_add);
+    delete_bitmap(g_bmp_mic);
+    delete_bitmap(g_bmp_send);
+    delete_bitmap(g_bmp_file);
+    delete_bitmap(g_bmp_project_open);
+    delete_bitmap(g_bmp_project_closed);
+    delete_bitmap(g_bmp_badge);
+    if (g_app_icon_big) {
+        DestroyIcon(g_app_icon_big);
+    }
+    if (g_app_icon_small) {
+        DestroyIcon(g_app_icon_small);
+    }
+    if (g_icon_new_chat) {
+        DestroyIcon(g_icon_new_chat);
+    }
+    if (g_icon_search) {
+        DestroyIcon(g_icon_search);
+    }
+    if (g_icon_scheduled) {
+        DestroyIcon(g_icon_scheduled);
+    }
+    if (g_icon_plugins) {
+        DestroyIcon(g_icon_plugins);
+    }
+    if (g_icon_add) {
+        DestroyIcon(g_icon_add);
+    }
+    if (g_icon_mic) {
+        DestroyIcon(g_icon_mic);
+    }
+    if (g_icon_send) {
+        DestroyIcon(g_icon_send);
+    }
+    if (g_icon_file) {
+        DestroyIcon(g_icon_file);
+    }
+    if (g_icon_project_open) {
+        DestroyIcon(g_icon_project_open);
+    }
+    if (g_icon_project_closed) {
+        DestroyIcon(g_icon_project_closed);
+    }
+    if (g_icon_badge) {
+        DestroyIcon(g_icon_badge);
+    }
 }
 
 static int is_section_label(int id)
@@ -169,6 +320,83 @@ static void fill_gradient(HDC hdc, RECT *rc, COLORREF top, COLORREF bottom)
         brush = CreateSolidBrush(blend_color(top, bottom, y, height - 1));
         FillRect(hdc, &line, brush);
         DeleteObject(brush);
+    }
+}
+
+static void draw_bitmap_icon(HDC hdc, HBITMAP bitmap, int x, int y,
+                             int w, int h)
+{
+    BLENDFUNCTION blend;
+    HDC mem_dc;
+    HGDIOBJ old_bitmap;
+
+    if (!bitmap) {
+        return;
+    }
+
+    mem_dc = CreateCompatibleDC(hdc);
+    if (!mem_dc) {
+        return;
+    }
+
+    old_bitmap = SelectObject(mem_dc, bitmap);
+    blend.BlendOp = AC_SRC_OVER;
+    blend.BlendFlags = 0;
+    blend.SourceConstantAlpha = 255;
+    blend.AlphaFormat = AC_SRC_ALPHA;
+    AlphaBlend(hdc, x, y, w, h, mem_dc, 0, 0, w, h, blend);
+    SelectObject(mem_dc, old_bitmap);
+    DeleteDC(mem_dc);
+}
+
+static void draw_icon_handle(HDC hdc, HICON icon, int x, int y, int w, int h)
+{
+    if (icon) {
+        DrawIconEx(hdc, x, y, icon, w, h, 0, NULL, DI_NORMAL);
+    }
+}
+
+static HICON toolbar_icon_for_id(int id)
+{
+    switch (id) {
+    case ID_NEW_CHAT:
+        return g_icon_new_chat;
+    case ID_SEARCH:
+        return g_icon_search;
+    case ID_SCHEDULED:
+        return g_icon_scheduled;
+    case ID_PLUGINS:
+        return g_icon_plugins;
+    case ID_ADD:
+        return g_icon_add;
+    case ID_MIC:
+        return g_icon_mic;
+    case ID_SEND:
+        return g_icon_send;
+    default:
+        return NULL;
+    }
+}
+
+static HBITMAP toolbar_bitmap_for_id(int id)
+{
+    switch (id) {
+    case ID_NEW_CHAT:
+        return g_bmp_new_chat;
+    case ID_SEARCH:
+        return g_bmp_search;
+    case ID_SCHEDULED:
+        return g_bmp_scheduled;
+    case ID_PLUGINS:
+        return g_bmp_plugins;
+    case ID_ADD:
+        return g_bmp_add;
+    case ID_MIC:
+        return g_bmp_mic;
+    case ID_SEND:
+        return g_bmp_send;
+    default:
+        return NULL;
     }
 }
 
@@ -291,6 +519,20 @@ static void draw_toolbar_icon(HDC hdc, int id, RECT *rc, COLORREF color)
     HBRUSH old_brush;
     int x;
     int y;
+    HBITMAP bitmap;
+    HICON icon;
+
+    icon = toolbar_icon_for_id(id);
+    if (icon) {
+        draw_icon_handle(hdc, icon, rc->left, rc->top, 16, 16);
+        return;
+    }
+
+    bitmap = toolbar_bitmap_for_id(id);
+    if (bitmap) {
+        draw_bitmap_icon(hdc, bitmap, rc->left, rc->top, 16, 16);
+        return;
+    }
 
     x = rc->left;
     y = rc->top;
@@ -403,6 +645,24 @@ static void draw_agent_badge(DRAWITEMSTRUCT *item)
     int old_mode;
 
     rc = item->rcItem;
+    if (g_icon_badge) {
+        FillRect(item->hDC, &rc, g_bg_brush);
+        draw_icon_handle(item->hDC, g_icon_badge,
+                         rc.left + ((rc.right - rc.left) - 32) / 2,
+                         rc.top + ((rc.bottom - rc.top) - 32) / 2,
+                         32, 32);
+        return;
+    }
+
+    if (g_bmp_badge) {
+        FillRect(item->hDC, &rc, g_bg_brush);
+        draw_bitmap_icon(item->hDC, g_bmp_badge,
+                         rc.left + ((rc.right - rc.left) - 32) / 2,
+                         rc.top + ((rc.bottom - rc.top) - 32) / 2,
+                         32, 32);
+        return;
+    }
+
     fill_gradient(item->hDC, &rc, RGB(77, 144, 230), RGB(0, 62, 174));
 
     border = CreatePen(PS_SOLID, 1, RGB(0, 45, 130));
@@ -547,7 +807,8 @@ static void draw_button(DRAWITEMSTRUCT *item)
                item->CtlID == ID_SCHEDULED ||
                item->CtlID == ID_PLUGINS ||
                item->CtlID == ID_ADD ||
-               item->CtlID == ID_MIC;
+               item->CtlID == ID_MIC ||
+               item->CtlID == ID_SEND;
     if (has_icon) {
         icon_rc.left = rc.left + 8;
         icon_rc.top = rc.top + ((rc.bottom - rc.top) - 16) / 2;
@@ -741,14 +1002,37 @@ static void draw_owner_list(DRAWITEMSTRUCT *item)
     if (item->CtlID == ID_PROJECTS_LIST) {
         if (text[0] == '[' && text[2] == ']') {
             expanded = text[1] == '-';
-            draw_project_box(item->hDC, rc.left + 4, rc.top + 3, expanded,
-                             icon_color);
-            text_rc.left = rc.left + 20;
+            if (expanded && g_icon_project_open) {
+                draw_icon_handle(item->hDC, g_icon_project_open,
+                                 rc.left + 3, rc.top, 16, 16);
+            } else if (!expanded && g_icon_project_closed) {
+                draw_icon_handle(item->hDC, g_icon_project_closed,
+                                 rc.left + 3, rc.top, 16, 16);
+            } else if (expanded && g_bmp_project_open) {
+                draw_bitmap_icon(item->hDC, g_bmp_project_open,
+                                 rc.left + 3, rc.top, 16, 16);
+            } else if (!expanded && g_bmp_project_closed) {
+                draw_bitmap_icon(item->hDC, g_bmp_project_closed,
+                                 rc.left + 3, rc.top, 16, 16);
+            } else {
+                draw_project_box(item->hDC, rc.left + 4, rc.top + 3, expanded,
+                                 icon_color);
+            }
+            text_rc.left = rc.left + 22;
             DrawText(item->hDC, text + 4, -1, &text_rc,
                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         } else if (text[0] == ' ') {
             split_project_child(text, label, sizeof(label), age, sizeof(age));
-            draw_file_icon(item->hDC, rc.left + 18, rc.top + 2, icon_color);
+            if (g_icon_file) {
+                draw_icon_handle(item->hDC, g_icon_file, rc.left + 18, rc.top,
+                                 16, 16);
+            } else if (g_bmp_file) {
+                draw_bitmap_icon(item->hDC, g_bmp_file, rc.left + 18, rc.top,
+                                 16, 16);
+            } else {
+                draw_file_icon(item->hDC, rc.left + 18, rc.top + 2,
+                               icon_color);
+            }
             text_rc.left = rc.left + 34;
             age_rc = rc;
             age_rc.left = rc.right - 34;
@@ -1244,11 +1528,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     g_hinst = hinstance;
     setup_fonts();
     setup_brushes();
+    load_assets();
 
     ZeroMemory(&wc, sizeof(wc));
     wc.lpfnWndProc = window_proc;
     wc.hInstance = hinstance;
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = g_app_icon_big ? g_app_icon_big : LoadIcon(NULL, IDI_APPLICATION);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = g_bg_brush;
     wc.lpszClassName = CLASS_NAME;
@@ -1274,6 +1559,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     if (!hwnd) {
         MessageBox(NULL, "CreateWindowEx failed.", "XPAgent", MB_ICONERROR);
         return 1;
+    }
+
+    if (g_app_icon_big) {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g_app_icon_big);
+    }
+    if (g_app_icon_small) {
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g_app_icon_small);
     }
 
     ShowWindow(hwnd, show);
@@ -1302,6 +1594,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     if (g_white_brush) {
         DeleteObject(g_white_brush);
     }
+    cleanup_assets();
 
     return (int)msg.wParam;
 }

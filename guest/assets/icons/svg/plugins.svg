@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="plug" x1="5" y1="3" x2="5" y2="18" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#dfeeff"/>
+      <stop offset="1" stop-color="#8db9f0"/>
+    </linearGradient>
+    <linearGradient id="cord" x1="11" y1="15" x2="20" y2="23" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6da2ea"/>
+      <stop offset="1" stop-color="#245aa8"/>
+    </linearGradient>
+  </defs>
+  <path d="M8 3.2v4M14 3.2v4" stroke="#245aa8" stroke-width="1.6" stroke-linecap="round"/>
+  <rect x="5.5" y="6.5" width="11" height="10.5" rx="2.2" fill="url(#plug)" stroke="#245aa8" stroke-width="1.2"/>
+  <path d="M8.2 9.2h5.6M8.2 12h5.6" stroke="#2a63ba" stroke-width="1.1" stroke-linecap="round"/>
+  <path d="M11 17c0 2.6 1.8 4 5.2 4h3.3" fill="none" stroke="#0a3d87" stroke-width="3" stroke-linecap="round"/>
+  <path d="M11 17c0 2.6 1.8 4 5.2 4h3.3" fill="none" stroke="url(#cord)" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M7.1 7.7h7.3" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round"/>
+</svg>

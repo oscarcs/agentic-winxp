@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="folder" x1="2" y1="5" x2="2" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff8d6"/>
+      <stop offset="0.48" stop-color="#ffd86d"/>
+      <stop offset="1" stop-color="#d99715"/>
+    </linearGradient>
+  </defs>
+  <path d="M2.5 7h6.2l1.8 2h11v10.5h-19z" fill="url(#folder)" stroke="#9b6509" stroke-width="1.1"/>
+  <path d="M3.7 10.1h16.6" stroke="#fff0a2" stroke-width="1.1"/>
+  <path d="M4.1 8.1h5.2" stroke="#fff9d8" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

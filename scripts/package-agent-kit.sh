@@ -24,7 +24,7 @@ cp -R "$BUILD_DIR/_winapi/winapi-full-for-0.9.27/include/"* "$BUILD_DIR/tcc/incl
 rm -rf "$BUILD_DIR/_winapi"
 
 mkdir -p "$BUILD_DIR/agent"
-cp "$ROOT"/guest/* "$BUILD_DIR/agent/"
+cp -R "$ROOT"/guest/. "$BUILD_DIR/agent/"
 perl -0pi -e 's/\r?\n/\r\n/g' "$BUILD_DIR"/agent/*.bat "$BUILD_DIR"/agent/README-XP.txt
 
 mkdir -p "$BUILD_DIR/portable"

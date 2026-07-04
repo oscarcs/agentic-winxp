@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="3" x2="0" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.58" stop-color="#eef5ff"/>
+      <stop offset="1" stop-color="#c9def8"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="5" y1="10" x2="5" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d6e8ff"/>
+    </linearGradient>
+  </defs>
+  <path d="M6.5 2.5h8.8l4.2 4.2v12.8h-13z" fill="url(#paper)" stroke="#2b61b4"/>
+  <path d="M15.5 2.8v4.7h4.7" fill="none" stroke="#7fa9e6"/>
+  <path d="M3.5 9.5h11c1.1 0 2 .9 2 2v5.1c0 1.1-.9 2-2 2H8.1l-3.9 2.9 1-2.9H3.5c-1.1 0-2-.9-2-2v-5.1c0-1.1.9-2 2-2z" fill="url(#bubble)" stroke="#245aa8"/>
+  <path d="M9 11.7v4.8M6.6 14.1h4.8" stroke="#0b53c5" stroke-width="1.8" stroke-linecap="square"/>
+</svg>

@@ -5,7 +5,7 @@ if "%OUT%"=="" set OUT=xpagent-gui.exe
 
 if not exist %TCC% goto missing_tcc
 
-%TCC% -mwindows xpagent-gui.c -o %OUT% -luser32 -lgdi32
+%TCC% -mwindows xpagent-gui.c -o %OUT% -luser32 -lgdi32 -lmsimg32
 if errorlevel 1 goto failed
 
 echo Built %OUT%
