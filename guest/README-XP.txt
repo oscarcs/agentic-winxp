@@ -24,6 +24,27 @@ netcheck.exe connects to:
 If it prints "winxp host gateway ok", TCC, Winsock, QEMU networking, and the
 host gateway are all working.
 
+To test native Win32 GUI builds:
+
+  build-gui-hello.bat
+  start "" gui-hello.exe
+
+This opens a small XP window built with TinyCC, user32, and gdi32.
+
+To test the first blocked-out xpagent GUI shell:
+
+  build-xpagent-gui.bat
+  start "" xpagent-gui.exe
+
+This is a static native Win32 layout prototype. Networking comes later.
+
+To capture the rendered XP desktop for visual checks:
+
+  build-capture-screen.bat
+  capture-screen.exe xp-screen.bmp
+
+Then fetch C:\agent\xp-screen.bmp from the host with xpilotctl.
+
 For interactive control from Codex/macOS, build and run xpilot:
 
   build-xpilot.bat
