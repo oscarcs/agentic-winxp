@@ -1,20 +1,54 @@
-# Windows XP QEMU VM
+# Agentic WinXP
 
-This project boots the included Windows XP SP3 x86 ISO under QEMU on Apple Silicon.
-It uses full x86 emulation, so it will not be fast, but it is plenty for a small
-Win32/TCC/Winsock agent.
+Agentic WinXP is an experiment in making Windows XP a usable participant in
+modern agent workflows.
+
+This involves two parts:
+- `xpilot`, which allows Codex or your MacOS LLM agent of choice to pilot XP.
+- An agent library (WIP) to allow XP to call modern LLMs.
+
+## What Works
+
+- `xpilot.exe` runs inside Windows XP and connects out to the host.
+- `xpilot_host.py` accepts the guest connection and exposes a local control API.
+- `xpilotctl.py` gives the host a small shell for XP command and file operations.
+- TinyCC builds XP-side Win32/Winsock programs directly in the guest.
+- `xpilot.exe` can start automatically after XP login and prints timestamped logs.
+
+## Current Shape
+
+```text
+macOS host
+  xpilot_host.py        listens on 127.0.0.1:7778 and 127.0.0.1:7780
+  xpilotctl.py          runs commands and moves files through the bridge
+  QEMU                  runs the XP guest
+
+Windows XP guest
+  xpilot.exe            connects to 10.0.2.2:7778
+  TinyCC                builds small Win32/Winsock tools
+  C:\agent              guest-side source and utilities
+```
+
+The guest makes outbound TCP connections to the host. That keeps XP away from
+modern internet requirements and avoids inbound guest networking.
 
 ## Quick Start
 
+Prerequisites: QEMU, Python 3, and `curl`. On macOS with Homebrew:
+
 ```sh
-./scripts/fetch-tools.sh
-./scripts/package-agent-kit.sh
+brew install qemu
+```
+
+For an already prepared local XP disk:
+
+```sh
 ./xpilot_host.py
 ./scripts/run-xp.sh
 ```
 
-After XP login, `xpilot.exe` starts from the Startup folder and connects back to
-the host bridge. Check it from macOS:
+After XP logs in, the Startup-folder wrapper should launch `xpilot.exe`. Check
+the bridge from macOS:
 
 ```sh
 ./xpilotctl.py status
@@ -22,102 +56,70 @@ the host bridge. Check it from macOS:
 ./xpilotctl.py shell
 ```
 
-## Files
-
-- `en_windows_xp_professional_with_service_pack_3_x86_cd_vl_x14-73974.iso` - install ISO.
-- `vm/winxp.qcow2` - virtual hard disk.
-- `scripts/install-xp.sh` - boot the installer from CD once.
-- `scripts/run-xp.sh` - boot the installed VM from disk.
-- `scripts/make-transfer-iso.sh` - package a host folder as an ISO for the guest.
-- `guest/` - XP-side source, batch files, and startup wrapper.
-- `xpilot_host.py` / `xpilotctl.py` - macOS-side bridge and CLI.
-- `transfer/` - generated/downloaded files served to XP.
-- `snapshots/` - local qcow2 baselines.
-- `docs/architecture.md` - short architecture and port map.
-
-The large VM artifacts are intentionally ignored by git. Rebuild the XP payload
-with:
+Common commands:
 
 ```sh
-./scripts/fetch-tools.sh
-./scripts/package-agent-kit.sh
+./xpilotctl.py run 'ver'
+./xpilotctl.py ls 'C:\agent'
+./xpilotctl.py cat 'C:\agent\README-XP.txt'
+./xpilotctl.py put ./local.c 'C:\agent\local.c'
+./xpilotctl.py get 'C:\agent\xpilot.c' /tmp/xpilot.c
+./xpilotctl.py putdir ./guest 'C:\agent\guest-copy'
+./xpilotctl.py getdir 'C:\agent' /tmp/agent-copy
 ```
 
-## Install
+## Fresh VM Setup
 
-Run:
+The repository does not include Windows XP media, VM disks, snapshots, or
+generated transfer payloads. By default, `scripts/install-xp.sh` looks for:
+
+```text
+en_windows_xp_professional_with_service_pack_3_x86_cd_vl_x14-73974.iso
+```
+
+Use that filename locally, or set `WINXP_ISO` when running the install script.
+
+Create and install the VM:
 
 ```sh
+mkdir -p vm
+qemu-img create -f qcow2 vm/winxp.qcow2 16G
 ./scripts/install-xp.sh
 ```
 
-In the XP installer, install to the blank virtual disk. When setup reboots, do not
-press a key at the "Press any key to boot from CD" prompt; let it continue from the
-hard disk.
-
-## Run After Install
-
-Run:
+Boot it later with:
 
 ```sh
 ./scripts/run-xp.sh
 ```
 
-The QEMU Cocoa window scales to fit when resized by default. To force the old
-fixed-size behavior:
+The QEMU Cocoa window scales to fit by default. Use `--no-resize` for fixed-size
+display behavior.
+
+## Build The XP Payload
+
+Download the official TinyCC archives and build the transfer zip:
 
 ```sh
-./scripts/run-xp.sh --no-resize
-```
-
-## Move Files Into XP
-
-The quickest method is to serve a folder from macOS and download files in XP:
-
-```sh
+./scripts/fetch-tools.sh
+./scripts/package-agent-kit.sh
 ./scripts/serve-transfer.sh
 ```
 
-Put files in `transfer/`, then in XP open:
-
-```text
-http://10.0.2.2:8000/
-```
-
-The prepared TCC payload is:
+From XP, open:
 
 ```text
 http://10.0.2.2:8000/agent-kit.zip
 ```
 
-Download it in XP, then extract it to `C:\`. It should create:
+Extract it to `C:\`, creating:
 
 ```text
 C:\tcc
 C:\agent
 ```
 
-Open Command Prompt in XP and run:
-
-```bat
-cd \agent
-build-hello.bat
-hello.exe
-build-netcheck.bat
-netcheck.exe
-```
-
-`netcheck.exe` should print the response from the macOS host gateway.
-
-## Pilot XP From macOS
-
-Start the host bridge:
-
-```sh
-./xpilot_host.py
-```
-
-In XP, after extracting the latest `agent-kit.zip`, open Command Prompt and run:
+Then build and run the XP bridge:
 
 ```bat
 cd \agent
@@ -125,85 +127,52 @@ build-xpilot.bat
 xpilot.exe
 ```
 
-Once XP shows `connected`, macOS can run commands through the bridge:
-
-```sh
-./xpilotctl.py status
-./xpilotctl.py ping
-./xpilotctl.py info
-./xpilotctl.py pwd
-./xpilotctl.py cd C:\agent
-./xpilotctl.py run dir C:\agent
-./xpilotctl.py run -t 2 ping -n 10 127.0.0.1
-```
-
-Move and inspect files with:
-
-```sh
-./xpilotctl.py ls C:\agent
-./xpilotctl.py cat C:\agent\hello.c
-./xpilotctl.py stat C:\agent\xpilot.exe
-./xpilotctl.py get C:\agent\hello.c /tmp/hello.c
-./xpilotctl.py put /tmp/hello.c C:\agent\hello.c
-printf "hello\n" | ./xpilotctl.py write C:\agent\note.txt
-./xpilotctl.py append C:\agent\note.txt "again"
-./xpilotctl.py edit C:\agent\hello.c
-./xpilotctl.py putdir ./guest C:\agent\guest-copy
-./xpilotctl.py getdir C:\agent /tmp/agent-copy
-./xpilotctl.py shell
-```
-
-`xpilot.exe` prints timestamped log lines in the XP console as requests arrive,
-including command previews, file paths, byte counts, exit codes, timeouts, and
-disconnect/reconnect events.
-
-To run xpilot after XP login, place `xpilot-startup.bat` in:
+To start it after login, copy `C:\agent\xpilot-startup.bat` to:
 
 ```text
 C:\Documents and Settings\All Users\Start Menu\Programs\Startup
 ```
 
-This project installs that startup file during setup. Remove it from that folder
-to disable automatic startup.
+## Repository Layout
 
-For offline or installer-style transfers, create an ISO from a host folder:
+- `guest/` - XP-side C source, batch files, tests, and startup wrapper.
+- `xpilot_host.py` - host bridge for the XP control connection.
+- `xpilotctl.py` - host CLI and interactive shell.
+- `scripts/` - QEMU, transfer, TinyCC download, and packaging helpers.
+- `docs/architecture.md` - short architecture and port map.
+- `host_gateway.py` - tiny legacy health endpoint used for early network tests.
 
-```sh
-./scripts/make-transfer-iso.sh ./transfer
+Ignored local state:
+
+- `*.iso`
+- `vm/`
+- `snapshots/`
+- `transfer/`
+- `build/`
+
+## Goals
+
+Near term, XP is a tool runtime for host-side agents:
+
+```text
+host agent -> xpilotctl/xpilot_host -> xpilot.exe -> cmd/files/TinyCC in XP
 ```
 
-Then boot XP with that ISO mounted:
+Next, XP should be able to access agents:
 
-```sh
-WINXP_CDROM=./transfer.iso ./scripts/run-xp.sh
+```text
+XP program -> plain TCP/HTTP to 10.0.2.2 -> host model gateway -> modern APIs
 ```
 
-Inside XP it will appear as a CD-ROM.
+That second direction is intentionally host-mediated. XP should not need modern
+TLS stacks, certificate stores, SDKs, or direct internet exposure.
 
-## Networking
+## Notes
 
-The VM uses QEMU user-mode networking with an `rtl8139` network card. XP should
-detect this without extra drivers. From inside the guest, the macOS host is usually
-reachable at:
+Useful local address from the XP guest:
 
 ```text
 10.0.2.2
 ```
 
-That is the address the future Win32 agent should use to reach a host-side gateway
-such as `10.0.2.2:7777`. Keep XP isolated and avoid general internet browsing; the
-OS is far past its support window.
-
-Start the tiny test gateway on macOS:
-
-```sh
-./host_gateway.py
-```
-
-Then in XP, open Internet Explorer to:
-
-```text
-http://10.0.2.2:7777/health
-```
-
-If that page loads, the guest-to-host bridge is working.
+That is QEMU user networking's usual route back to the macOS host.
