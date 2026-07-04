@@ -27,7 +27,10 @@ mkdir -p "$BUILD_DIR/agent"
 cp "$ROOT"/guest/* "$BUILD_DIR/agent/"
 perl -0pi -e 's/\r?\n/\r\n/g' "$BUILD_DIR"/agent/*.bat "$BUILD_DIR"/agent/README-XP.txt
 
+mkdir -p "$BUILD_DIR/portable"
+cp "$ROOT"/portable/agent_core.c "$ROOT"/portable/agent_core.h "$BUILD_DIR/portable/"
+
 rm -f "$OUT"
-(cd "$BUILD_DIR" && zip -qr "$OUT" tcc agent)
+(cd "$BUILD_DIR" && zip -qr "$OUT" tcc agent portable)
 
 echo "Wrote $OUT"

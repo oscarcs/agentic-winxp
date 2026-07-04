@@ -14,6 +14,7 @@ This involves two parts:
 - `xpilotctl.py` gives the host a small shell for XP command and file operations.
 - TinyCC builds XP-side Win32/Winsock programs directly in the guest.
 - `xpilot.exe` can start automatically after XP login and prints timestamped logs.
+- `xpagent` now has a portable C core with both macOS and XP console adapters.
 
 ## Current Shape
 
@@ -67,6 +68,44 @@ Common commands:
 ./xpilotctl.py putdir ./guest 'C:\agent\guest-copy'
 ./xpilotctl.py getdir 'C:\agent' /tmp/agent-copy
 ```
+
+## xpagent Local Test
+
+`xpagent` is the XP-native agent shell experiment. It uses a portable C core and
+thin platform adapters.
+
+Build and test it locally on macOS:
+
+```sh
+./scripts/build-host-xpagent.sh
+./host/agent_gateway.py
+printf 'hello\n/quit\n' | ./build/host/xpagent
+```
+
+Use local Codex instead of the echo gateway:
+
+```sh
+./host/agent_gateway.py --backend codex
+./build/host/xpagent
+```
+
+The gateway shells out to `codex exec` on the host and stores the Codex thread
+id in `.state/xpagent-codex-thread.txt`, so later `xpagent` runs can resume the
+same conversation. Use `--codex-new-session` to start over. XP still speaks only
+the small `AG1` protocol and never sees API keys or modern auth.
+
+Build and test it inside XP:
+
+```bat
+cd \agent
+build-xpagent.bat
+xpagent.exe
+```
+
+The echo gateway is useful for offline protocol tests. The codex backend is the
+first real LLM wrapper. The XP console adapter converts command prompt text to
+UTF-8 before sending it to the host, then converts UTF-8 replies back to the XP
+console code page with a few common punctuation fallbacks.
 
 ## Fresh VM Setup
 
@@ -136,6 +175,8 @@ C:\Documents and Settings\All Users\Start Menu\Programs\Startup
 ## Repository Layout
 
 - `guest/` - XP-side C source, batch files, tests, and startup wrapper.
+- `portable/` - platform-neutral `xpagent` core.
+- `host/` - host-side `xpagent` gateway and POSIX/macOS test adapter.
 - `xpilot_host.py` - host bridge for the XP control connection.
 - `xpilotctl.py` - host CLI and interactive shell.
 - `scripts/` - QEMU, transfer, TinyCC download, and packaging helpers.
@@ -158,14 +199,14 @@ Near term, XP is a tool runtime for host-side agents:
 host agent -> xpilotctl/xpilot_host -> xpilot.exe -> cmd/files/TinyCC in XP
 ```
 
-Next, XP should be able to access agents:
+XP can now call a host-side Codex wrapper:
 
 ```text
-XP program -> plain TCP/HTTP to 10.0.2.2 -> host model gateway -> modern APIs
+XP program -> AG1 over TCP to 10.0.2.2 -> host gateway -> codex exec
 ```
 
-That second direction is intentionally host-mediated. XP should not need modern
-TLS stacks, certificate stores, SDKs, or direct internet exposure.
+That direction is intentionally host-mediated. XP should not need modern TLS
+stacks, certificate stores, SDKs, API keys, or direct internet exposure.
 
 ## Notes
 

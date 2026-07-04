@@ -47,3 +47,17 @@ To start xpilot whenever XP logs in, copy xpilot-startup.bat to:
   C:\Documents and Settings\All Users\Start Menu\Programs\Startup
 
 This starts a visible console window after login. It does not run before login.
+
+xpagent is the XP-native agent shell experiment. It connects to the host gateway
+on 10.0.2.2:7790:
+
+  build-xpagent.bat
+  xpagent.exe
+
+Start the host gateway on macOS first:
+
+  ./host/agent_gateway.py --backend codex
+
+The gateway keeps Codex state on the host. The XP program only speaks the small
+AG1 TCP protocol and converts between the XP command prompt code page and UTF-8
+at the network boundary.

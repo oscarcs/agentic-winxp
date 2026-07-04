@@ -7,6 +7,7 @@ snapshots/
 build/
 transfer/
 *.qcow2
+.state/
 
 # Python and macOS noise
 __pycache__/
