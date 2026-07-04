@@ -27,6 +27,16 @@ The default session file is `.state/xpagent-codex-thread.txt`, which lets new
 `xpagent` connections resume the same Codex thread. Pass `--codex-new-session`
 to replace it.
 
+The Codex gateway can run a small JSON tool loop. Codex either returns a final
+answer or requests an `xp.*` tool; the gateway executes that tool through the
+local `xpilot_host.py` API, feeds the result back into the same Codex thread, and
+continues until there is a final answer. This keeps tool execution host-mediated
+for now, while `xpagent.exe` remains a portable console client.
+
+Do not launch a tool-backed `xpagent.exe` session via `xpilotctl run` for normal
+interactive use. That occupies the `xpilot` bridge with the running `xpagent`
+process, while the gateway needs the same bridge for nested XP tool calls.
+
 ## Ports
 
 - `7778`: raw `xpilot` guest-to-host control connection.

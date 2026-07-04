@@ -8,12 +8,86 @@ import socket
 import subprocess
 import tempfile
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 DEFAULT_CODEX_CANDIDATES = (
     "/Applications/Codex.app/Contents/Resources/codex",
     "codex",
 )
+
+TOOL_RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind", "message", "tool", "args_json"],
+    "properties": {
+        "kind": {"type": "string", "enum": ["final", "tool"]},
+        "message": {"type": "string"},
+        "tool": {
+            "type": "string",
+            "enum": [
+                "",
+                "xp.status",
+                "xp.info",
+                "xp.pwd",
+                "xp.cd",
+                "xp.run",
+                "xp.list_dir",
+                "xp.stat",
+                "xp.read_file",
+                "xp.write_file",
+                "xp.append_file",
+                "xp.mkdir",
+                "xp.delete_file",
+                "xp.remove_tree",
+            ],
+        },
+        "args_json": {"type": "string"},
+    },
+}
+
+TOOL_INSTRUCTIONS = r"""\
+You may use these XP tools by returning a JSON object with kind="tool".
+Return kind="final" with a message when you are done.
+
+Response format:
+- Final answer: {"kind":"final","message":"...","tool":"","args_json":"{}"}
+- Tool request: {"kind":"tool","message":"","tool":"xp.pwd","args_json":"{}"}
+
+Available tools:
+- xp.status: check whether xpilot is connected.
+  args: {}
+- xp.info: get XP host/process metadata.
+  args: {}
+- xp.pwd: get xpilot's current XP working directory.
+  args: {}
+- xp.cd: set xpilot's current XP working directory.
+  args: {"path": "C:\\agent"}
+- xp.run: run a Windows XP cmd.exe command.
+  args: {"command": "dir C:\\agent", "cwd": "C:\\agent", "timeout_ms": 30000, "max_output": 65536}
+- xp.list_dir: list an XP directory using dir /a.
+  args: {"path": "C:\\agent"}
+- xp.stat: stat an XP path through xpilot.
+  args: {"path": "C:\\agent\\xpagent.exe"}
+- xp.read_file: read a text file from XP.
+  args: {"path": "C:\\agent\\README-XP.txt", "encoding": "utf-8", "max_chars": 12000}
+- xp.write_file: write a text file on XP.
+  args: {"path": "C:\\agent\\note.txt", "text": "...", "encoding": "utf-8"}
+- xp.append_file: append text to a file on XP.
+  args: {"path": "C:\\agent\\note.txt", "text": "...", "encoding": "utf-8"}
+- xp.mkdir: create an XP directory.
+  args: {"path": "C:\\agent\\scratch"}
+- xp.delete_file: delete one XP file.
+  args: {"path": "C:\\agent\\scratch\\note.txt"}
+- xp.remove_tree: remove an XP directory tree.
+  args: {"path": "C:\\agent\\scratch"}
+
+Use XP tools only for work that needs XP state. Keep final answers concise.
+Use Windows XP paths and commands. Do not include Markdown code fences around
+the JSON response. args_json must itself be valid JSON.
+"""
 
 
 def read_line(conn):
@@ -84,6 +158,193 @@ def resolve_codex_command(configured):
     raise RuntimeError("no working Codex CLI found")
 
 
+def q(value):
+    return urllib.parse.quote(value, safe="")
+
+
+def decode_bytes(data, encoding="utf-8"):
+    try:
+        return data.decode(encoding, "replace")
+    except LookupError:
+        return data.decode("utf-8", "replace")
+
+
+def truncate_text(text, limit):
+    if limit <= 0 or len(text) <= limit:
+        return text, False
+    return text[:limit] + "\n[truncated]", True
+
+
+def quote_xp_arg(value):
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def parse_structured_response(text):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
+class XPilotTools:
+    def __init__(self, api, result_limit):
+        self.api = api.rstrip("/")
+        self.result_limit = result_limit
+
+    def request(self, method, path, data=None):
+        req = urllib.request.Request(self.api + path, data=data, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
+        except urllib.error.URLError as exc:
+            body = f"{exc}\n".encode("utf-8")
+            return 599, {}, body
+
+    def text_result(self, name, status, headers, body, encoding="utf-8"):
+        text = decode_bytes(body, encoding)
+        text, truncated = truncate_text(text, self.result_limit)
+        return {
+            "ok": 200 <= status < 300,
+            "tool": name,
+            "http_status": status,
+            "xpilot_status": headers.get("X-XPilot-Status", ""),
+            "xpilot_code": headers.get("X-XPilot-Code", ""),
+            "text": text,
+            "truncated": truncated,
+        }
+
+    def run_command(
+        self, command, cwd="", timeout_ms=30000, max_output=65536,
+        tool_name="xp.run"
+    ):
+        query = urllib.parse.urlencode(
+            {
+                "cwd": cwd,
+                "timeout_ms": str(timeout_ms),
+                "max_output": str(max_output),
+            }
+        )
+        status, headers, body = self.request(
+            "POST", f"/run?{query}", command.encode("utf-8")
+        )
+        result = self.text_result(tool_name, status, headers, body, encoding="cp437")
+        result["exit_code"] = int(headers.get("X-XPilot-Exit-Code", "1"))
+        result["command"] = command
+        if cwd:
+            result["cwd"] = cwd
+        return result
+
+    def run(self, name, args):
+        if not isinstance(args, dict):
+            args = {}
+
+        if name == "xp.status":
+            status, headers, body = self.request("GET", "/status")
+            return self.text_result(name, status, headers, body)
+
+        if name == "xp.info":
+            status, headers, body = self.request("GET", "/info")
+            return self.text_result(name, status, headers, body)
+
+        if name == "xp.pwd":
+            status, headers, body = self.request("GET", "/cwd")
+            return self.text_result(name, status, headers, body)
+
+        if name == "xp.cd":
+            path = str(args.get("path", ""))
+            status, headers, body = self.request(
+                "POST", "/cwd", path.encode("utf-8")
+            )
+            return self.text_result(name, status, headers, body)
+
+        if name == "xp.run":
+            command = str(args.get("command", ""))
+            if not command:
+                return {"ok": False, "tool": name, "error": "missing command"}
+            return self.run_command(
+                command,
+                cwd=str(args.get("cwd", "")),
+                timeout_ms=int(args.get("timeout_ms", 30000)),
+                max_output=int(args.get("max_output", 65536)),
+            )
+
+        if name == "xp.list_dir":
+            path = str(args.get("path", "."))
+            return self.run_command(f"dir /a {quote_xp_arg(path)}", tool_name=name)
+
+        if name == "xp.stat":
+            path = str(args.get("path", ""))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            status, headers, body = self.request("GET", f"/stat?path={q(path)}")
+            return self.text_result(name, status, headers, body)
+
+        if name == "xp.read_file":
+            path = str(args.get("path", ""))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            encoding = str(args.get("encoding", "utf-8"))
+            max_chars = int(args.get("max_chars", self.result_limit))
+            status, headers, body = self.request("GET", f"/file?path={q(path)}")
+            text = decode_bytes(body, encoding)
+            text, truncated = truncate_text(text, min(max_chars, self.result_limit))
+            return {
+                "ok": 200 <= status < 300,
+                "tool": name,
+                "http_status": status,
+                "xpilot_status": headers.get("X-XPilot-Status", ""),
+                "xpilot_code": headers.get("X-XPilot-Code", ""),
+                "path": path,
+                "text": text,
+                "truncated": truncated,
+            }
+
+        if name in ("xp.write_file", "xp.append_file"):
+            path = str(args.get("path", ""))
+            text = str(args.get("text", ""))
+            encoding = str(args.get("encoding", "utf-8"))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            query = f"/file?path={q(path)}"
+            if name == "xp.append_file":
+                query += "&append=1"
+            try:
+                data = text.encode(encoding)
+            except LookupError:
+                data = text.encode("utf-8")
+            status, headers, body = self.request("POST", query, data)
+            result = self.text_result(name, status, headers, body)
+            result["path"] = path
+            result["bytes"] = len(data)
+            return result
+
+        if name == "xp.mkdir":
+            path = str(args.get("path", ""))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            return self.run_command(f"mkdir {quote_xp_arg(path)}", tool_name=name)
+
+        if name == "xp.delete_file":
+            path = str(args.get("path", ""))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            return self.run_command(f"del /f /q {quote_xp_arg(path)}", tool_name=name)
+
+        if name == "xp.remove_tree":
+            path = str(args.get("path", ""))
+            if not path:
+                return {"ok": False, "tool": name, "error": "missing path"}
+            return self.run_command(f"rmdir /s /q {quote_xp_arg(path)}", tool_name=name)
+
+        return {"ok": False, "tool": name, "error": "unknown tool"}
+
+
 class GatewayBackend:
     def __init__(self, args):
         self.kind = args.backend
@@ -93,8 +354,12 @@ class GatewayBackend:
         self.codex_sandbox = args.codex_sandbox
         self.codex_session_file = args.codex_session_file
         self.codex_new_session = args.codex_new_session
+        self.codex_ignore_user_config = not args.codex_use_user_config
         self.codex_timeout = args.codex_timeout
         self.system_prompt = args.system_prompt
+        self.xp_tools_enabled = not args.disable_xp_tools
+        self.xp_tool_max_steps = args.xp_tool_max_steps
+        self.xp_tools = XPilotTools(args.xpilot_api, args.xp_tool_result_limit)
         self.lock = threading.Lock()
         self.codex_thread_id = ""
 
@@ -117,13 +382,90 @@ class GatewayBackend:
             return self._respond_with_codex_locked(user_text, session)
 
     def _respond_with_codex_locked(self, user_text, session):
+        if not self.xp_tools_enabled:
+            prompt = (
+                f"{self.system_prompt}\n\n"
+                "The user is typing from a Windows XP program named xpagent. "
+                "Answer as plain text. Keep responses concise unless asked otherwise.\n\n"
+                f"User message:\n{user_text}\n"
+            )
+            return self.run_codex_once(prompt, session)
+
+        prompt = self.build_tool_initial_prompt(user_text)
+        for step in range(self.xp_tool_max_steps + 1):
+            answer = self.run_codex_once(prompt, session, structured=True)
+            try:
+                response = parse_structured_response(answer)
+            except (TypeError, json.JSONDecodeError) as exc:
+                return f"Could not parse Codex tool response: {exc}\n\n{answer}"
+
+            kind = response.get("kind")
+            if kind == "final":
+                return response.get("message", "").strip() or "(empty response)"
+
+            if kind != "tool":
+                return f"Unsupported Codex response kind: {kind!r}"
+            if step >= self.xp_tool_max_steps:
+                return "Stopped: tool step limit reached before a final answer."
+
+            tool_name = response.get("tool", "")
+            tool_args = self.parse_tool_args(response)
+            print(
+                f"codex tool step {step + 1}: {tool_name} {json.dumps(tool_args)}",
+                flush=True,
+            )
+            tool_result = self.xp_tools.run(tool_name, tool_args)
+            prompt = self.build_tool_result_prompt(tool_name, tool_args, tool_result)
+
+        return "Stopped: tool loop ended before a final answer."
+
+    def build_tool_initial_prompt(self, user_text):
+        return (
+            f"{self.system_prompt}\n\n"
+            "The user is typing from a Windows XP program named xpagent. "
+            "You are allowed to operate the XP VM through host-mediated tools. "
+            "Do not ask the user to run commands for you when a provided XP tool "
+            "can do the work.\n\n"
+            f"{TOOL_INSTRUCTIONS}\n"
+            "Respond with exactly one JSON object matching the schema.\n\n"
+            f"User message:\n{user_text}\n"
+        )
+
+    def build_tool_result_prompt(self, tool_name, tool_args, tool_result):
+        return (
+            "Tool result for your previous XP tool request:\n"
+            f"{json.dumps({'tool': tool_name, 'args': tool_args, 'result': tool_result}, ensure_ascii=True)}\n\n"
+            "Continue the same task. Respond with exactly one JSON object matching "
+            "the schema: either request another tool or return a final message."
+        )
+
+    def parse_tool_args(self, response):
+        if "args" in response and isinstance(response["args"], dict):
+            return response["args"]
+        args_json = response.get("args_json", "{}")
+        try:
+            args = json.loads(args_json or "{}")
+        except json.JSONDecodeError:
+            return {"_parse_error": f"invalid args_json: {args_json}"}
+        if isinstance(args, dict):
+            return args
+        return {"_parse_error": f"args_json must decode to an object: {args_json}"}
+
+    def run_codex_once(self, prompt, session, structured=False):
         fd, output_path = tempfile.mkstemp(prefix="xpagent-codex-", suffix=".txt")
         os.close(fd)
+        schema_path = ""
+        if structured:
+            fd, schema_path = tempfile.mkstemp(
+                prefix="xpagent-schema-", suffix=".json"
+            )
+            os.close(fd)
+            with open(schema_path, "w", encoding="utf-8") as f:
+                json.dump(TOOL_RESPONSE_SCHEMA, f)
 
         thread_id = self.current_codex_thread_id(session)
         command = list(self.codex_command)
         if thread_id:
-            prompt = user_text
             command.extend(
                 [
                     "exec",
@@ -134,6 +476,10 @@ class GatewayBackend:
                     output_path,
                 ]
             )
+            if self.codex_ignore_user_config:
+                command.append("--ignore-user-config")
+            if structured:
+                command.extend(["--output-schema", schema_path])
             if self.codex_model:
                 command.extend(["--model", self.codex_model])
             command.extend(
@@ -143,12 +489,6 @@ class GatewayBackend:
                 ]
             )
         else:
-            prompt = (
-                f"{self.system_prompt}\n\n"
-                "The user is typing from a Windows XP program named xpagent. "
-                "Answer as plain text. Keep responses concise unless asked otherwise.\n\n"
-                f"User message:\n{user_text}\n"
-            )
             command.extend(
                 [
                     "exec",
@@ -164,6 +504,10 @@ class GatewayBackend:
                     output_path,
                 ]
             )
+            if self.codex_ignore_user_config:
+                command.append("--ignore-user-config")
+            if structured:
+                command.extend(["--output-schema", schema_path])
             if self.codex_model:
                 command.extend(["--model", self.codex_model])
             command.append("-")
@@ -196,6 +540,11 @@ class GatewayBackend:
                 os.unlink(output_path)
             except OSError:
                 pass
+            if schema_path:
+                try:
+                    os.unlink(schema_path)
+                except OSError:
+                    pass
 
     def current_codex_thread_id(self, session):
         if self.codex_session_file:
@@ -310,11 +659,24 @@ def main():
         action="store_true",
         help="Start a fresh Codex thread and overwrite --codex-session-file.",
     )
+    parser.add_argument(
+        "--codex-use-user-config",
+        action="store_true",
+        help="Load normal Codex user config/plugins instead of the minimal bridge config.",
+    )
     parser.add_argument("--codex-timeout", type=int, default=120)
     parser.add_argument(
         "--system-prompt",
         default="You are the host-side LLM adapter for Agentic WinXP.",
     )
+    parser.add_argument("--xpilot-api", default="http://127.0.0.1:7780")
+    parser.add_argument(
+        "--disable-xp-tools",
+        action="store_true",
+        help="Disable Codex JSON tool loop and return plain Codex text.",
+    )
+    parser.add_argument("--xp-tool-max-steps", type=int, default=8)
+    parser.add_argument("--xp-tool-result-limit", type=int, default=12000)
     args = parser.parse_args()
     backend = GatewayBackend(args)
 

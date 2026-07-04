@@ -15,6 +15,7 @@ This involves two parts:
 - TinyCC builds XP-side Win32/Winsock programs directly in the guest.
 - `xpilot.exe` can start automatically after XP login and prints timestamped logs.
 - `xpagent` now has a portable C core with both macOS and XP console adapters.
+- The Codex-backed `xpagent` gateway can call XP tools through `xpilot`.
 
 ## Current Shape
 
@@ -94,6 +95,11 @@ id in `.state/xpagent-codex-thread.txt`, so later `xpagent` runs can resume the
 same conversation. Use `--codex-new-session` to start over. XP still speaks only
 the small `AG1` protocol and never sees API keys or modern auth.
 
+With `--backend codex`, the gateway can also let Codex operate XP through the
+existing `xpilot` bridge. Initial tools include `xp.run`, `xp.list_dir`,
+`xp.read_file`, `xp.write_file`, and directory/file helpers. Disable that tool
+loop with `--disable-xp-tools`.
+
 Build and test it inside XP:
 
 ```bat
@@ -101,6 +107,10 @@ cd \agent
 build-xpagent.bat
 xpagent.exe
 ```
+
+When testing tool-backed `xpagent` inside XP, launch it from an XP Command
+Prompt rather than through `xpilotctl run`; tool calls need the `xpilot` bridge
+to be free for nested command/file operations.
 
 The echo gateway is useful for offline protocol tests. The codex backend is the
 first real LLM wrapper. The XP console adapter converts command prompt text to
@@ -203,6 +213,9 @@ XP can now call a host-side Codex wrapper:
 
 ```text
 XP program -> AG1 over TCP to 10.0.2.2 -> host gateway -> codex exec
+                                              |
+                                              v
+                                           xpilot API -> XP tools
 ```
 
 That direction is intentionally host-mediated. XP should not need modern TLS

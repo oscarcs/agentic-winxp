@@ -31,16 +31,18 @@ guest/
 - Transport adapter: TCP connect/read/write.
 - UI adapter: console prompt/output now; TUI and Win32 GUI later.
 - Tool adapter: file and process operations, initially host-mediated or explicit.
+  The first implementation is host-mediated through the existing `xpilot` API.
 
 ## Milestones
 
 1. Echo round trip through the gateway from macOS.
 2. Echo round trip through the gateway from XP.
 3. Host gateway shells out to local `codex exec`.
-4. XP exposes basic tools: read, write, list, run.
+4. Host gateway exposes XP tools through `xpilot`: run, read, write, list.
 5. Approval/logging loop for tool calls.
 6. TUI.
 7. Win32 GUI.
 
-The current milestone is the first three bullets: the same core runs locally on
-macOS and inside XP, and the host gateway can use local Codex as the LLM backend.
+The current milestone is the first four bullets: the same core runs locally on
+macOS and inside XP, the host gateway can use local Codex as the LLM backend,
+and Codex can operate XP through a small `xpilot`-backed tool loop.
