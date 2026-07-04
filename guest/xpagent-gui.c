@@ -30,8 +30,6 @@
 #define ID_ENV_LIST 1025
 #define ID_TASKS_LABEL 1026
 #define ID_TASKS_LIST 1027
-#define ID_SOURCES_LABEL 1028
-#define ID_SOURCES_LIST 1029
 #define ID_STATUS_BAR 1030
 #define ID_TOOLSTRIP 1031
 
@@ -41,6 +39,7 @@ static HINSTANCE g_hinst;
 static HFONT g_font;
 static HFONT g_bold_font;
 static HFONT g_mono_font;
+static HFONT g_small_font;
 static HBRUSH g_bg_brush;
 static HBRUSH g_header_brush;
 static HBRUSH g_white_brush;
@@ -71,8 +70,6 @@ static HWND g_env_label;
 static HWND g_env_list;
 static HWND g_tasks_label;
 static HWND g_tasks_list;
-static HWND g_sources_label;
-static HWND g_sources_list;
 static HWND g_status_bar;
 
 static void set_font(HWND hwnd, HFONT font)
@@ -108,8 +105,7 @@ static int is_section_label(int id)
            id == ID_CHANGES_LABEL ||
            id == ID_PROMPT_LABEL ||
            id == ID_ENV_LABEL ||
-           id == ID_TASKS_LABEL ||
-           id == ID_SOURCES_LABEL;
+           id == ID_TASKS_LABEL;
 }
 
 static int is_owner_button(int id)
@@ -128,8 +124,7 @@ static int is_owner_list(int id)
     return id == ID_PROJECTS_LIST ||
            id == ID_CHANGES_LIST ||
            id == ID_ENV_LIST ||
-           id == ID_TASKS_LIST ||
-           id == ID_SOURCES_LIST;
+           id == ID_TASKS_LIST;
 }
 
 static int blend_channel(int a, int b, int step, int steps)
@@ -428,6 +423,62 @@ static void draw_agent_badge(DRAWITEMSTRUCT *item)
     SelectObject(item->hDC, old_font);
 }
 
+static void draw_user_info(DRAWITEMSTRUCT *item)
+{
+    RECT rc;
+    RECT left_rc;
+    RECT right_rc;
+    HGDIOBJ old_font;
+    int old_mode;
+
+    rc = item->rcItem;
+    FillRect(item->hDC, &rc, g_bg_brush);
+
+    old_mode = SetBkMode(item->hDC, TRANSPARENT);
+
+    left_rc = rc;
+    left_rc.top += 1;
+    left_rc.bottom = left_rc.top + 13;
+    old_font = SelectObject(item->hDC, g_bold_font);
+    SetTextColor(item->hDC, RGB(0, 0, 0));
+    DrawText(item->hDC, "Oscar Sims", -1, &left_rc,
+             DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    left_rc.top += 14;
+    left_rc.bottom = left_rc.top + 13;
+    SelectObject(item->hDC, g_font);
+    DrawText(item->hDC, "Pro", -1, &left_rc,
+             DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    SelectObject(item->hDC, g_small_font);
+    SetTextColor(item->hDC, RGB(70, 70, 70));
+
+    left_rc.top += 17;
+    left_rc.bottom = left_rc.top + 12;
+    right_rc = left_rc;
+    right_rc.left = rc.left + 58;
+    DrawText(item->hDC, "5h", -1, &left_rc, DT_LEFT | DT_SINGLELINE);
+    DrawText(item->hDC, "8%  03:40", -1, &right_rc,
+             DT_RIGHT | DT_SINGLELINE);
+
+    left_rc.top += 13;
+    left_rc.bottom = left_rc.top + 12;
+    right_rc = left_rc;
+    right_rc.left = rc.left + 58;
+    DrawText(item->hDC, "Weekly", -1, &left_rc, DT_LEFT | DT_SINGLELINE);
+    DrawText(item->hDC, "54%  7 Jul", -1, &right_rc,
+             DT_RIGHT | DT_SINGLELINE);
+
+    left_rc.top += 14;
+    left_rc.bottom = left_rc.top + 14;
+    SetTextColor(item->hDC, RGB(0, 51, 153));
+    DrawText(item->hDC, "3 resets available", -1, &left_rc,
+             DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    SetBkMode(item->hDC, old_mode);
+    SelectObject(item->hDC, old_font);
+}
+
 static void draw_button(DRAWITEMSTRUCT *item)
 {
     char text[80];
@@ -505,11 +556,14 @@ static void draw_button(DRAWITEMSTRUCT *item)
         if (item->CtlID == ID_ADD) {
             icon_rc.left = rc.left + ((rc.right - rc.left) - 16) / 2;
         }
+        if (item->CtlID == ID_MIC && text[0] == 0) {
+            icon_rc.left = rc.left + ((rc.right - rc.left) - 16) / 2;
+        }
         if (selected) {
             OffsetRect(&icon_rc, 1, 1);
         }
         draw_toolbar_icon(item->hDC, (int)item->CtlID, &icon_rc, icon_color);
-        if (item->CtlID != ID_ADD) {
+        if (item->CtlID != ID_ADD && text[0] != 0) {
             text_rc.left += 17;
         }
     }
@@ -517,7 +571,7 @@ static void draw_button(DRAWITEMSTRUCT *item)
     old_font = SelectObject(item->hDC, g_font);
     old_mode = SetBkMode(item->hDC, TRANSPARENT);
     SetTextColor(item->hDC, text_color);
-    if (item->CtlID != ID_ADD) {
+    if (item->CtlID != ID_ADD && text[0] != 0) {
         DrawText(item->hDC, text, -1, &text_rc,
                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
@@ -636,8 +690,8 @@ static void draw_status_bar(DRAWITEMSTRUCT *item)
     SetTextColor(item->hDC, RGB(64, 64, 64));
     draw_status_segment(item->hDC, &rc, 0, 64, "Ready");
     draw_status_segment(item->hDC, &rc, 64, 188, "xpilot connected");
-    draw_status_segment(item->hDC, &rc, 188, 360, "gateway 10.0.2.2:7790");
-    draw_status_segment(item->hDC, &rc, 360, rc.right, "portable C core");
+    draw_status_segment(item->hDC, &rc, 188, rc.right,
+                        "gateway 10.0.2.2:7790");
     SetBkMode(item->hDC, old_mode);
     SelectObject(item->hDC, old_font);
 }
@@ -699,8 +753,9 @@ static void draw_owner_list(DRAWITEMSTRUCT *item)
             age_rc = rc;
             age_rc.left = rc.right - 34;
             age_rc.right = rc.right - 6;
+            text_rc.right = age_rc.left - 4;
             DrawText(item->hDC, label, -1, &text_rc,
-                     DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             if (age[0]) {
                 DrawText(item->hDC, age, -1, &age_rc,
                          DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
@@ -761,6 +816,17 @@ static void setup_fonts(void)
     lf.lfHeight = -13;
     lf.lfWeight = FW_NORMAL;
     g_mono_font = CreateFontIndirect(&lf);
+
+    ZeroMemory(&lf, sizeof(lf));
+    lstrcpy(lf.lfFaceName, "Tahoma");
+    lf.lfHeight = -10;
+    lf.lfWeight = FW_NORMAL;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfOutPrecision = OUT_DEFAULT_PRECIS;
+    lf.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+    lf.lfQuality = DEFAULT_QUALITY;
+    lf.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+    g_small_font = CreateFontIndirect(&lf);
 }
 
 static void setup_brushes(void)
@@ -821,7 +887,6 @@ static void fill_static_content(void)
     SendMessage(g_projects_list, LB_SETCURSEL, 1, 0);
 
     sample =
-        "Worked for 2m 3s\r\n\r\n"
         "Yep, XPAgent now has a tidier native Win32 shell: project navigation "
         "on the left, the active thread in the middle, and environment context "
         "on the right.\r\n\r\n"
@@ -834,7 +899,6 @@ static void fill_static_content(void)
         "to this transcript.";
     SetWindowText(g_transcript, sample);
 
-    add_list_item(g_changes_list, "Edited 3 files");
     add_list_item(g_changes_list, "guest/README-XP.txt                 +7 -0");
     add_list_item(g_changes_list, "guest/build-gui-hello.bat          +25 -0");
     add_list_item(g_changes_list, "guest/gui-hello.c                 +155 -0");
@@ -847,11 +911,8 @@ static void fill_static_content(void)
 
     add_list_item(g_tasks_list, "./host/agent_gateway.py --backend codex");
     add_list_item(g_tasks_list, "./xpilot_host.py");
-    add_list_item(g_sources_list, "web");
-    add_list_item(g_sources_list, "filesystem");
-    add_list_item(g_sources_list, "xpilot");
 
-    add_combo_item(g_open_in, "Open in");
+    add_combo_item(g_open_in, "Open in...");
     add_combo_item(g_open_in, "Explorer");
     add_combo_item(g_open_in, "Command Prompt");
     SendMessage(g_open_in, CB_SETCURSEL, 0, 0);
@@ -866,7 +927,7 @@ static void fill_static_content(void)
     add_combo_item(g_model, "5.5 Fast");
     SendMessage(g_model, CB_SETCURSEL, 0, 0);
 
-    SetWindowText(g_prompt, "Ask for follow-up changes");
+    SetWindowText(g_prompt, "");
 }
 
 static void create_children(HWND hwnd)
@@ -897,8 +958,8 @@ static void create_children(HWND hwnd)
                                    ID_PROJECTS_LIST);
     g_user_badge = make_control(hwnd, "STATIC", "XP", SS_OWNERDRAW, 0,
                                 ID_USER_BADGE);
-    g_user_text = make_control(hwnd, "STATIC", "Oscar Sims\r\nPro",
-                               SS_LEFT, 0, ID_USER_TEXT);
+    g_user_text = make_control(hwnd, "STATIC", "", SS_OWNERDRAW, 0,
+                               ID_USER_TEXT);
 
     g_thread_title = make_section_label(hwnd, "Set up Windows XP ISO",
                                         ID_THREAD_TITLE);
@@ -906,11 +967,12 @@ static void create_children(HWND hwnd)
                             SS_OWNERDRAW, 0, ID_STATUS);
     g_transcript = make_control(hwnd, "EDIT", "", edit_style | ES_READONLY,
                                 WS_EX_CLIENTEDGE, ID_TRANSCRIPT);
-    g_changes_label = make_section_label(hwnd, "Edited files", ID_CHANGES_LABEL);
+    g_changes_label = make_section_label(hwnd, "Edited files (3)",
+                                         ID_CHANGES_LABEL);
     g_changes_list = make_control(hwnd, "LISTBOX", "", list_style,
                                   WS_EX_CLIENTEDGE,
                                   ID_CHANGES_LIST);
-    g_prompt_label = make_section_label(hwnd, "Ask for follow-up changes",
+    g_prompt_label = make_section_label(hwnd, "Follow-up",
                                         ID_PROMPT_LABEL);
     g_prompt = make_control(hwnd, "EDIT", "",
                             ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL |
@@ -920,7 +982,7 @@ static void create_children(HWND hwnd)
     g_access = make_control(hwnd, "COMBOBOX", "", CBS_DROPDOWNLIST, 0,
                             ID_ACCESS);
     g_model = make_control(hwnd, "COMBOBOX", "", CBS_DROPDOWNLIST, 0, ID_MODEL);
-    g_mic = make_control(hwnd, "BUTTON", "Mic", BS_OWNERDRAW, 0, ID_MIC);
+    g_mic = make_control(hwnd, "BUTTON", "", BS_OWNERDRAW, 0, ID_MIC);
     g_send = make_control(hwnd, "BUTTON", "Send", BS_OWNERDRAW, 0, ID_SEND);
 
     g_env_label = make_section_label(hwnd, "Environment", ID_ENV_LABEL);
@@ -930,12 +992,8 @@ static void create_children(HWND hwnd)
     g_tasks_list = make_control(hwnd, "LISTBOX", "", list_style,
                                 WS_EX_CLIENTEDGE,
                                 ID_TASKS_LIST);
-    g_sources_label = make_section_label(hwnd, "Sources", ID_SOURCES_LABEL);
-    g_sources_list = make_control(hwnd, "LISTBOX", "", list_style,
-                                  WS_EX_CLIENTEDGE,
-                                  ID_SOURCES_LIST);
     g_status_bar = make_control(hwnd, "STATIC",
-                                "Ready | xpilot connected | gateway 10.0.2.2:7790 | portable C core",
+                                "",
                                 SS_OWNERDRAW, 0, ID_STATUS_BAR);
 
     set_font(g_transcript, g_font);
@@ -970,7 +1028,6 @@ static void layout_children(HWND hwnd)
     int label_h;
     int user_h;
     int composer_h;
-    int changes_h;
     int header_h;
     int status_h;
     int transcript_h;
@@ -1013,8 +1070,8 @@ static void layout_children(HWND hwnd)
     move(g_toolstrip, 0, toolbar_y + toolbar_h, rc.right, 6);
 
     label_h = 24;
-    footer_h = 64;
-    user_h = 44;
+    footer_h = 94;
+    user_h = 80;
     row_y = content_y;
 
     move(g_projects_label, left_x, row_y, left_w, label_h);
@@ -1023,14 +1080,12 @@ static void layout_children(HWND hwnd)
          content_y + content_h - row_y - footer_h - gap);
     move(g_user_badge, left_x, content_y + content_h - user_h, 38, 38);
     move(g_user_text, left_x + 48, content_y + content_h - user_h + 2,
-         left_w - 48, 38);
+         left_w - 48, user_h);
 
     header_h = 26;
     status_h = 26;
-    changes_h = 118;
     composer_h = 104;
-    transcript_h = content_h - header_h - status_h - changes_h - composer_h -
-                   (gap * 4);
+    transcript_h = content_h - header_h - status_h - composer_h - (gap * 2);
 
     row_y = content_y;
     move(g_thread_title, center_x, row_y, center_w, header_h);
@@ -1039,10 +1094,6 @@ static void layout_children(HWND hwnd)
     row_y += status_h + gap;
     move(g_transcript, center_x, row_y, center_w, transcript_h);
     row_y += transcript_h + gap;
-    move(g_changes_label, center_x, row_y, center_w, label_h);
-    row_y += label_h;
-    move(g_changes_list, center_x, row_y, center_w, changes_h - label_h);
-    row_y += changes_h - label_h + gap;
     move(g_prompt_label, center_x, row_y, center_w, label_h);
     row_y += label_h;
     prompt_h = 44;
@@ -1056,8 +1107,8 @@ static void layout_children(HWND hwnd)
     control_x += 116;
     move(g_model, control_x, row_y, 115, 160);
     control_x = center_x + center_w - 104;
-    move(g_mic, control_x, row_y, 42, bottom_row_h);
-    move(g_send, control_x + 48, row_y, 56, bottom_row_h);
+    move(g_mic, control_x, row_y, 34, bottom_row_h);
+    move(g_send, control_x + 40, row_y, 64, bottom_row_h);
 
     right_section_h = (content_h - (label_h * 3) - (gap * 2)) / 3;
     row_y = content_y;
@@ -1069,9 +1120,9 @@ static void layout_children(HWND hwnd)
     row_y += label_h;
     move(g_tasks_list, right_x, row_y, right_w, right_section_h);
     row_y += right_section_h + gap;
-    move(g_sources_label, right_x, row_y, right_w, label_h);
+    move(g_changes_label, right_x, row_y, right_w, label_h);
     row_y += label_h;
-    move(g_sources_list, right_x, row_y, right_w,
+    move(g_changes_list, right_x, row_y, right_w,
          content_y + content_h - row_y);
     move(g_status_bar, 0, rc.bottom - statusbar_h, rc.right, statusbar_h);
 }
@@ -1103,6 +1154,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         if (draw_item && draw_item->CtlID == ID_USER_BADGE) {
             draw_agent_badge(draw_item);
+            return TRUE;
+        }
+        if (draw_item && draw_item->CtlID == ID_USER_TEXT) {
+            draw_user_info(draw_item);
             return TRUE;
         }
         if (draw_item && is_owner_button((int)draw_item->CtlID)) {
@@ -1234,6 +1289,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     }
     if (g_mono_font) {
         DeleteObject(g_mono_font);
+    }
+    if (g_small_font) {
+        DeleteObject(g_small_font);
     }
     if (g_bg_brush) {
         DeleteObject(g_bg_brush);
