@@ -21,6 +21,10 @@ with real state, real gateway traffic, and a small set of useful actions.
   files placeholder instead of static mock data.
 - Verified: rebuilt in XP and used `xpilot` harness checks for Send, New Chat,
   and Reconnect.
+- Final verification: built the final `xpagent-gui.exe` in `C:\agent`, launched
+  it in the running XP instance, drove a Send smoke test through visible
+  controls, captured a final screenshot, restored the Codex gateway on `7790`,
+  and reconnected the running GUI to it.
 
 ## First Functional Slice
 
