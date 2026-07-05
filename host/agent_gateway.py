@@ -120,6 +120,26 @@ def send_frame(conn, frame_type, frame_id, body):
     conn.sendall(header + body)
 
 
+def split_gui_metadata(body):
+    metadata = {}
+    if not body.startswith("XPAGENT-META "):
+        return body, metadata
+
+    header, sep, message = body.partition("\n\n")
+    if not sep:
+        return body, metadata
+
+    for line in header.splitlines():
+        if not line.startswith("XPAGENT-META "):
+            continue
+        key_value = line[len("XPAGENT-META ") :]
+        key, _, value = key_value.partition(":")
+        key = key.strip().lower()
+        if key:
+            metadata[key] = value.strip()
+    return message, metadata
+
+
 def command_works(command):
     try:
         result = subprocess.run(
@@ -618,6 +638,9 @@ def handle_client(conn, peer, backend):
             frame_id = int(frame_id_text)
             length = int(length_text)
             body = read_exact(conn, length).decode("utf-8", "replace")
+            body, gui_metadata = split_gui_metadata(body)
+            if gui_metadata:
+                session["gui_metadata"] = gui_metadata
 
             print(f"{peer[0]} #{frame_id} {frame_type} {length} bytes", flush=True)
 

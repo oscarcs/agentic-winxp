@@ -3,15 +3,27 @@
 The GUI now has the right broad shape. The next job is to replace the mock UI
 with real state, real gateway traffic, and a small set of useful actions.
 
+## Implementation Status
+
+- Done: GUI Send now posts to `10.0.2.2:7790` over AG1 on a worker thread.
+- Done: user, assistant, and error messages append to the transcript pane.
+- Done: the status line/status bar move through connecting, thinking, done, and
+  error states without blocking the Win32 message loop.
+- Done: selected permission and model values travel in a small GUI metadata
+  envelope; the host gateway strips and stores that metadata before handing the
+  message to the backend.
+- Verified: built in the running XP guest with TinyCC and used `xpilot` to drive
+  the live GUI controls through an echo gateway smoke test.
+
 ## First Functional Slice
 
 This is the smallest version that makes the GUI feel alive:
 
-1. Connect from the GUI to the host gateway at `10.0.2.2:7790`.
-2. Let the prompt box and Send button submit one user message over AG1.
-3. Append user and assistant messages to the transcript pane.
-4. Update the status line through `connecting`, `thinking`, `done`, and `error`.
-5. Include the selected permission and model values in request metadata, even if
+1. Done: connect from the GUI to the host gateway at `10.0.2.2:7790`.
+2. Done: let the prompt box and Send button submit one user message over AG1.
+3. Done: append user and assistant messages to the transcript pane.
+4. Done: update the status line through `connecting`, `thinking`, `done`, and `error`.
+5. Done: include the selected permission and model values in request metadata, even if
    the host ignores them at first.
 
 ## Core Plumbing
@@ -108,9 +120,9 @@ This is the smallest version that makes the GUI feel alive:
 
 ## Suggested Build Order
 
-1. Wire the GUI Send path to the host gateway.
-2. Add worker-thread status and transcript append events.
-3. Make permission and model picker values part of each request.
+1. Done: wire the GUI Send path to the host gateway.
+2. Done: add worker-thread status and transcript append events.
+3. Done: make permission and model picker values part of each request.
 4. Add reconnect and error recovery.
 5. Populate status bar and environment from real gateway state.
 6. Populate tasks and edited files from tool/gateway events.

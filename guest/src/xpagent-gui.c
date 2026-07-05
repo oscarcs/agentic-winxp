@@ -1,9 +1,29 @@
 #define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
 #include <windows.h>
+#include <string.h>
+
+#include "../../portable/agent_core.h"
 
 #ifndef BS_FLAT
 #define BS_FLAT 0x8000
 #endif
+
+#ifndef CP_UTF8
+#define CP_UTF8 65001
+#endif
+
+#ifndef WM_APP
+#define WM_APP 0x8000
+#endif
+
+#define WM_XPAGENT_STATUS (WM_APP + 1)
+#define WM_XPAGENT_REPLY (WM_APP + 2)
+#define WM_XPAGENT_ERROR (WM_APP + 3)
+
+#define GATEWAY_HOST "10.0.2.2"
+#define GATEWAY_PORT 7790
+#define EDIT_TEXT_LIMIT 60000
 
 #define ID_NEW_CHAT 1001
 #define ID_SEARCH 1002
@@ -97,6 +117,528 @@ static HWND g_env_list;
 static HWND g_tasks_label;
 static HWND g_tasks_list;
 static HWND g_status_bar;
+
+typedef struct socket_transport {
+    SOCKET socket;
+} socket_transport;
+
+typedef struct gui_request {
+    HWND hwnd;
+    int id;
+    DWORD started_at;
+    char body[AG_MAX_MESSAGE + 1];
+} gui_request;
+
+static SOCKET g_gateway_socket = INVALID_SOCKET;
+static CRITICAL_SECTION g_socket_lock;
+static int g_socket_lock_ready;
+static int g_gateway_connected;
+static int g_winsock_ready;
+static int g_request_in_flight;
+static int g_next_request_id = 1;
+static char g_status_bar_state[64] = "Ready";
+
+static char *heap_dup_text(const char *text)
+{
+    char *copy;
+    int len;
+
+    if (!text) {
+        text = "";
+    }
+    len = lstrlen(text) + 1;
+    copy = (char *)HeapAlloc(GetProcessHeap(), 0, len);
+    if (copy) {
+        lstrcpy(copy, text);
+    }
+    return copy;
+}
+
+static void heap_free_text(LPARAM lparam)
+{
+    if (lparam) {
+        HeapFree(GetProcessHeap(), 0, (void *)lparam);
+    }
+}
+
+static void post_text_message(HWND hwnd, UINT msg, const char *text)
+{
+    char *copy;
+
+    copy = heap_dup_text(text);
+    if (!copy) {
+        return;
+    }
+    if (!PostMessage(hwnd, msg, 0, (LPARAM)copy)) {
+        HeapFree(GetProcessHeap(), 0, copy);
+    }
+}
+
+static int append_limited(char *dst, int dst_size, const char *src)
+{
+    int dst_len;
+    int src_len;
+    int room;
+
+    if (!dst || dst_size <= 0) {
+        return -1;
+    }
+    if (!src) {
+        src = "";
+    }
+
+    dst_len = lstrlen(dst);
+    if (dst_len >= dst_size - 1) {
+        return -1;
+    }
+    src_len = lstrlen(src);
+    room = dst_size - dst_len - 1;
+    if (src_len > room) {
+        src_len = room;
+    }
+    memcpy(dst + dst_len, src, src_len);
+    dst[dst_len + src_len] = '\0';
+    return src[src_len] ? -1 : 0;
+}
+
+static int ui_to_utf8(const char *input, char *out, int out_cap)
+{
+    WCHAR wide[AG_MAX_MESSAGE + 1];
+    int n;
+
+    if (!out || out_cap <= 0) {
+        return -1;
+    }
+    if (!input) {
+        input = "";
+    }
+
+    n = MultiByteToWideChar(CP_ACP, 0, input, -1, wide,
+                            sizeof(wide) / sizeof(wide[0]));
+    if (n <= 0) {
+        lstrcpyn(out, input, out_cap);
+        return lstrlen(out);
+    }
+
+    n = WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, out_cap, NULL, NULL);
+    if (n <= 0) {
+        lstrcpyn(out, input, out_cap);
+        return lstrlen(out);
+    }
+    return n - 1;
+}
+
+static int utf8_to_ui(const char *input, char *out, int out_cap)
+{
+    WCHAR wide[AG_MAX_MESSAGE + 1];
+    int n;
+
+    if (!out || out_cap <= 0) {
+        return -1;
+    }
+    if (!input) {
+        input = "";
+    }
+
+    n = MultiByteToWideChar(CP_UTF8, 0, input, -1, wide,
+                            sizeof(wide) / sizeof(wide[0]));
+    if (n <= 0) {
+        lstrcpyn(out, input, out_cap);
+        return lstrlen(out);
+    }
+
+    n = WideCharToMultiByte(CP_ACP, 0, wide, -1, out, out_cap, NULL, NULL);
+    if (n <= 0) {
+        lstrcpyn(out, input, out_cap);
+        return lstrlen(out);
+    }
+    return n - 1;
+}
+
+static int socket_write_all(void *ctx, const char *data, int len)
+{
+    socket_transport *transport;
+    int written;
+
+    transport = (socket_transport *)ctx;
+    written = 0;
+    while (written < len) {
+        int n;
+
+        n = send(transport->socket, data + written, len - written, 0);
+        if (n == SOCKET_ERROR || n == 0) {
+            return -1;
+        }
+        written += n;
+    }
+    return 0;
+}
+
+static int socket_read_line(void *ctx, char *buf, int cap)
+{
+    socket_transport *transport;
+    int i;
+
+    transport = (socket_transport *)ctx;
+    i = 0;
+    while (i < cap - 1) {
+        char ch;
+        int n;
+
+        n = recv(transport->socket, &ch, 1, 0);
+        if (n <= 0) {
+            return -1;
+        }
+        buf[i++] = ch;
+        if (ch == '\n') {
+            buf[i] = '\0';
+            return 0;
+        }
+    }
+    buf[cap - 1] = '\0';
+    return -1;
+}
+
+static int socket_read_exact(void *ctx, char *buf, int len)
+{
+    socket_transport *transport;
+    int got;
+
+    transport = (socket_transport *)ctx;
+    got = 0;
+    while (got < len) {
+        int n;
+
+        n = recv(transport->socket, buf + got, len - got, 0);
+        if (n <= 0) {
+            return -1;
+        }
+        got += n;
+    }
+    return 0;
+}
+
+static SOCKET connect_tcp(const char *host, int port)
+{
+    SOCKET s;
+    struct sockaddr_in addr;
+
+    s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((unsigned short)port);
+    addr.sin_addr.s_addr = inet_addr(host);
+
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s);
+        return INVALID_SOCKET;
+    }
+
+    return s;
+}
+
+static void close_gateway_socket(void)
+{
+    SOCKET s;
+
+    s = INVALID_SOCKET;
+    if (g_socket_lock_ready) {
+        EnterCriticalSection(&g_socket_lock);
+    }
+    if (g_gateway_socket != INVALID_SOCKET) {
+        s = g_gateway_socket;
+        g_gateway_socket = INVALID_SOCKET;
+    }
+    g_gateway_connected = 0;
+    if (g_socket_lock_ready) {
+        LeaveCriticalSection(&g_socket_lock);
+    }
+    if (s != INVALID_SOCKET) {
+        closesocket(s);
+    }
+}
+
+static int ensure_gateway_connection(char *error, int error_cap)
+{
+    SOCKET s;
+
+    if (g_socket_lock_ready) {
+        EnterCriticalSection(&g_socket_lock);
+    }
+    if (g_gateway_socket != INVALID_SOCKET) {
+        if (g_socket_lock_ready) {
+            LeaveCriticalSection(&g_socket_lock);
+        }
+        return 0;
+    }
+    if (g_socket_lock_ready) {
+        LeaveCriticalSection(&g_socket_lock);
+    }
+
+    s = connect_tcp(GATEWAY_HOST, GATEWAY_PORT);
+    if (s == INVALID_SOCKET) {
+        wsprintf(error, "Could not connect to %s:%d (Winsock error %d).",
+                 GATEWAY_HOST, GATEWAY_PORT, WSAGetLastError());
+        return -1;
+    }
+
+    if (g_socket_lock_ready) {
+        EnterCriticalSection(&g_socket_lock);
+    }
+    g_gateway_socket = s;
+    g_gateway_connected = 1;
+    if (g_socket_lock_ready) {
+        LeaveCriticalSection(&g_socket_lock);
+    }
+    return 0;
+}
+
+static void set_request_in_flight(int in_flight)
+{
+    g_request_in_flight = in_flight;
+    if (g_send) {
+        EnableWindow(g_send, !in_flight);
+        InvalidateRect(g_send, NULL, TRUE);
+    }
+}
+
+static void set_runtime_status(const char *text)
+{
+    if (!text || !text[0]) {
+        text = "Ready";
+    }
+    lstrcpyn(g_status_bar_state, text, sizeof(g_status_bar_state));
+    if (g_status) {
+        SetWindowText(g_status, text);
+        InvalidateRect(g_status, NULL, TRUE);
+    }
+    if (g_status_bar) {
+        InvalidateRect(g_status_bar, NULL, TRUE);
+    }
+}
+
+static void edit_append_raw(HWND edit, const char *text)
+{
+    int len;
+
+    if (!edit || !text) {
+        return;
+    }
+    len = GetWindowTextLength(edit);
+    SendMessage(edit, EM_SETSEL, len, len);
+    SendMessage(edit, EM_REPLACESEL, FALSE, (LPARAM)text);
+    SendMessage(edit, EM_SCROLLCARET, 0, 0);
+}
+
+static void edit_append_normalized(HWND edit, const char *text)
+{
+    char buf[512];
+    int used;
+
+    if (!text) {
+        return;
+    }
+    used = 0;
+    while (*text) {
+        if (*text == '\r') {
+            text++;
+            continue;
+        }
+        if (*text == '\n') {
+            if (used > 0) {
+                buf[used] = '\0';
+                edit_append_raw(edit, buf);
+                used = 0;
+            }
+            edit_append_raw(edit, "\r\n");
+            text++;
+            continue;
+        }
+        buf[used++] = *text++;
+        if (used >= (int)sizeof(buf) - 1) {
+            buf[used] = '\0';
+            edit_append_raw(edit, buf);
+            used = 0;
+        }
+    }
+    if (used > 0) {
+        buf[used] = '\0';
+        edit_append_raw(edit, buf);
+    }
+}
+
+static void append_transcript_message_ui(const char *role, const char *text)
+{
+    if (GetWindowTextLength(g_transcript) > 0) {
+        edit_append_raw(g_transcript, "\r\n\r\n");
+    }
+    edit_append_raw(g_transcript, role);
+    edit_append_raw(g_transcript, ":\r\n");
+    edit_append_normalized(g_transcript, text);
+}
+
+static void append_transcript_message_utf8(const char *role, const char *utf8)
+{
+    char ui_text[(AG_MAX_MESSAGE * 2) + 1];
+
+    utf8_to_ui(utf8, ui_text, sizeof(ui_text));
+    append_transcript_message_ui(role, ui_text);
+}
+
+static void make_request_body(char *out, int out_cap, const char *message_utf8,
+                              const char *permission_ui, const char *model_ui)
+{
+    char permission_utf8[128];
+    char model_utf8[128];
+
+    ui_to_utf8(permission_ui, permission_utf8, sizeof(permission_utf8));
+    ui_to_utf8(model_ui, model_utf8, sizeof(model_utf8));
+
+    out[0] = '\0';
+    append_limited(out, out_cap, "XPAGENT-META permission: ");
+    append_limited(out, out_cap, permission_utf8);
+    append_limited(out, out_cap, "\nXPAGENT-META model: ");
+    append_limited(out, out_cap, model_utf8);
+    append_limited(out, out_cap, "\n\n");
+    append_limited(out, out_cap, message_utf8);
+}
+
+static DWORD WINAPI agent_worker(LPVOID param)
+{
+    gui_request *request;
+    socket_transport socket_ctx;
+    ag_transport transport;
+    ag_message reply;
+    SOCKET s;
+    char error[256];
+    char status[80];
+    DWORD elapsed_ms;
+
+    request = (gui_request *)param;
+    error[0] = '\0';
+
+    if (!g_winsock_ready) {
+        post_text_message(request->hwnd, WM_XPAGENT_ERROR,
+                          "Winsock startup failed.");
+        HeapFree(GetProcessHeap(), 0, request);
+        return 0;
+    }
+
+    post_text_message(request->hwnd, WM_XPAGENT_STATUS,
+                      "Connecting to gateway...");
+    if (ensure_gateway_connection(error, sizeof(error)) != 0) {
+        post_text_message(request->hwnd, WM_XPAGENT_ERROR, error);
+        HeapFree(GetProcessHeap(), 0, request);
+        return 0;
+    }
+
+    post_text_message(request->hwnd, WM_XPAGENT_STATUS, "Thinking...");
+
+    if (g_socket_lock_ready) {
+        EnterCriticalSection(&g_socket_lock);
+    }
+    s = g_gateway_socket;
+    if (g_socket_lock_ready) {
+        LeaveCriticalSection(&g_socket_lock);
+    }
+
+    socket_ctx.socket = s;
+    transport.ctx = &socket_ctx;
+    transport.write_all = socket_write_all;
+    transport.read_line = socket_read_line;
+    transport.read_exact = socket_read_exact;
+
+    if (ag_exchange(&transport, request->id, request->body, &reply) != 0) {
+        wsprintf(error, "Gateway exchange failed (Winsock error %d).",
+                 WSAGetLastError());
+        close_gateway_socket();
+        post_text_message(request->hwnd, WM_XPAGENT_ERROR, error);
+        HeapFree(GetProcessHeap(), 0, request);
+        return 0;
+    }
+
+    if (lstrcmp(reply.type, "ERROR") == 0) {
+        post_text_message(request->hwnd, WM_XPAGENT_ERROR, reply.body);
+        HeapFree(GetProcessHeap(), 0, request);
+        return 0;
+    }
+
+    post_text_message(request->hwnd, WM_XPAGENT_REPLY, reply.body);
+    elapsed_ms = GetTickCount() - request->started_at;
+    wsprintf(status, "Done in %lus", (elapsed_ms + 999) / 1000);
+    post_text_message(request->hwnd, WM_XPAGENT_STATUS, status);
+    HeapFree(GetProcessHeap(), 0, request);
+    return 0;
+}
+
+static void handle_send(HWND hwnd)
+{
+    gui_request *request;
+    HANDLE thread;
+    DWORD thread_id;
+    char *prompt_ui;
+    char prompt_utf8[AG_MAX_MESSAGE + 1];
+    char permission_ui[80];
+    char model_ui[80];
+    int len;
+
+    if (g_request_in_flight) {
+        return;
+    }
+
+    len = GetWindowTextLength(g_prompt);
+    if (len <= 0) {
+        return;
+    }
+
+    prompt_ui = (char *)HeapAlloc(GetProcessHeap(), 0, len + 1);
+    if (!prompt_ui) {
+        return;
+    }
+    GetWindowText(g_prompt, prompt_ui, len + 1);
+    if (prompt_ui[0] == '\0') {
+        HeapFree(GetProcessHeap(), 0, prompt_ui);
+        return;
+    }
+
+    request = (gui_request *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                       sizeof(gui_request));
+    if (!request) {
+        HeapFree(GetProcessHeap(), 0, prompt_ui);
+        return;
+    }
+
+    GetWindowText(g_access, permission_ui, sizeof(permission_ui));
+    GetWindowText(g_model, model_ui, sizeof(model_ui));
+    ui_to_utf8(prompt_ui, prompt_utf8, sizeof(prompt_utf8));
+
+    request->hwnd = hwnd;
+    request->id = g_next_request_id++;
+    request->started_at = GetTickCount();
+    make_request_body(request->body, sizeof(request->body), prompt_utf8,
+                      permission_ui, model_ui);
+
+    append_transcript_message_ui("You", prompt_ui);
+    SetWindowText(g_prompt, "");
+    set_request_in_flight(1);
+    set_runtime_status("Connecting...");
+
+    thread = CreateThread(NULL, 0, agent_worker, request, 0, &thread_id);
+    if (!thread) {
+        append_transcript_message_ui("Error", "Could not start request worker.");
+        set_runtime_status("Error");
+        set_request_in_flight(0);
+        HeapFree(GetProcessHeap(), 0, request);
+    } else {
+        CloseHandle(thread);
+    }
+
+    HeapFree(GetProcessHeap(), 0, prompt_ui);
+}
 
 static void set_font(HWND hwnd, HFONT font)
 {
@@ -1064,9 +1606,10 @@ static void draw_status_bar(DRAWITEMSTRUCT *item)
     old_font = SelectObject(item->hDC, g_font);
     old_mode = SetBkMode(item->hDC, TRANSPARENT);
     SetTextColor(item->hDC, RGB(64, 64, 64));
-    draw_status_segment(item->hDC, &rc, 0, 64, "Ready");
-    draw_status_segment(item->hDC, &rc, 64, 188, "xpilot connected");
-    draw_status_segment(item->hDC, &rc, 188, rc.right,
+    draw_status_segment(item->hDC, &rc, 0, 96, g_status_bar_state);
+    draw_status_segment(item->hDC, &rc, 96, 220, "xpilot connected");
+    draw_status_segment(item->hDC, &rc, 220, rc.right,
+                        g_gateway_connected ? "gateway connected" :
                         "gateway 10.0.2.2:7790");
     SetBkMode(item->hDC, old_mode);
     SelectObject(item->hDC, old_font);
@@ -1309,16 +1852,8 @@ static void fill_static_content(void)
     SendMessage(g_projects_list, LB_SETCURSEL, 1, 0);
 
     sample =
-        "Yep, XPAgent now has a tidier native Win32 shell: project navigation "
-        "on the left, the active thread in the middle, and environment context "
-        "on the right.\r\n\r\n"
-        "Added:\r\n"
-        "  * guest/src/xpagent-gui.c\r\n"
-        "  * guest/assets/icons/svg/send.svg\r\n\r\n"
-        "The real version can reuse AG1 networking while this window owns "
-        "the transcript, prompt, task list, and environment panes.\r\n\r\n"
-        "Next natural step: wire Send to the host gateway and append replies "
-        "to this transcript.";
+        "Ready for a new XPAgent conversation.\r\n\r\n"
+        "Type a message below and click Send to talk to the host gateway.";
     SetWindowText(g_transcript, sample);
 
     add_list_item(g_changes_list, "guest/src/xpagent-gui.c          +305 -8");
@@ -1409,6 +1944,8 @@ static void create_children(HWND hwnd)
     set_font(g_transcript, g_font);
     set_font(g_prompt, g_font);
     set_font(g_user_badge, g_bold_font);
+    SendMessage(g_transcript, EM_LIMITTEXT, EDIT_TEXT_LIMIT, 0);
+    SendMessage(g_prompt, EM_LIMITTEXT, AG_MAX_MESSAGE - 512, 0);
 
     fill_static_content();
 }
@@ -1565,10 +2102,29 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         setup_menu(hwnd);
         create_children(hwnd);
         layout_children(hwnd);
+        set_runtime_status("Ready");
         return 0;
 
     case WM_SIZE:
         layout_children(hwnd);
+        return 0;
+
+    case WM_XPAGENT_STATUS:
+        set_runtime_status((const char *)lparam);
+        heap_free_text(lparam);
+        return 0;
+
+    case WM_XPAGENT_REPLY:
+        append_transcript_message_utf8("Assistant", (const char *)lparam);
+        set_request_in_flight(0);
+        heap_free_text(lparam);
+        return 0;
+
+    case WM_XPAGENT_ERROR:
+        append_transcript_message_utf8("Error", (const char *)lparam);
+        set_runtime_status("Error");
+        set_request_in_flight(0);
+        heap_free_text(lparam);
         return 0;
 
     case WM_DRAWITEM:
@@ -1640,10 +2196,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case ID_SEND:
-            MessageBox(hwnd,
-                       "Networking comes next. This pass blocks out the UI.",
-                       "XPAgent",
-                       MB_OK | MB_ICONINFORMATION);
+            handle_send(hwnd);
             return 0;
         case ID_OPEN_IN: {
             const char *items[] = {"Open in...", "Explorer", "Command Prompt"};
@@ -1669,6 +2222,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         break;
 
     case WM_DESTROY:
+        close_gateway_socket();
         PostQuitMessage(0);
         return 0;
 
@@ -1685,6 +2239,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     WNDCLASS wc;
     HWND hwnd;
     MSG msg;
+    WSADATA wsa;
 
     (void)hprev;
     (void)cmdline;
@@ -1693,6 +2248,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
     setup_fonts();
     setup_brushes();
     load_assets();
+    InitializeCriticalSection(&g_socket_lock);
+    g_socket_lock_ready = 1;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
+        g_winsock_ready = 1;
+    }
 
     ZeroMemory(&wc, sizeof(wc));
     wc.lpfnWndProc = window_proc;
@@ -1759,6 +2319,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hprev, LPSTR cmdline,
         DeleteObject(g_white_brush);
     }
     cleanup_assets();
+    if (g_winsock_ready) {
+        WSACleanup();
+    }
+    if (g_socket_lock_ready) {
+        DeleteCriticalSection(&g_socket_lock);
+    }
 
     return (int)msg.wParam;
 }
