@@ -136,7 +136,16 @@ static int g_gateway_connected;
 static int g_winsock_ready;
 static int g_request_in_flight;
 static int g_next_request_id = 1;
+static int g_message_count;
 static char g_status_bar_state[64] = "Ready";
+static WNDPROC g_prompt_proc;
+
+static void refresh_runtime_lists(void);
+static void handle_send(HWND hwnd);
+static void reset_conversation(HWND hwnd);
+static void handle_reconnect(HWND hwnd);
+static void copy_focused_control(void);
+static void select_all_focused_control(void);
 
 static char *heap_dup_text(const char *text)
 {
@@ -404,6 +413,7 @@ static void set_request_in_flight(int in_flight)
         EnableWindow(g_send, !in_flight);
         InvalidateRect(g_send, NULL, TRUE);
     }
+    refresh_runtime_lists();
 }
 
 static void set_runtime_status(const char *text)
@@ -419,6 +429,7 @@ static void set_runtime_status(const char *text)
     if (g_status_bar) {
         InvalidateRect(g_status_bar, NULL, TRUE);
     }
+    refresh_runtime_lists();
 }
 
 static void edit_append_raw(HWND edit, const char *text)
@@ -479,6 +490,8 @@ static void append_transcript_message_ui(const char *role, const char *text)
     edit_append_raw(g_transcript, role);
     edit_append_raw(g_transcript, ":\r\n");
     edit_append_normalized(g_transcript, text);
+    g_message_count++;
+    refresh_runtime_lists();
 }
 
 static void append_transcript_message_utf8(const char *role, const char *utf8)
@@ -575,6 +588,30 @@ static DWORD WINAPI agent_worker(LPVOID param)
     return 0;
 }
 
+static DWORD WINAPI reconnect_worker(LPVOID param)
+{
+    HWND hwnd;
+    char error[256];
+
+    hwnd = (HWND)param;
+    error[0] = '\0';
+
+    if (!g_winsock_ready) {
+        post_text_message(hwnd, WM_XPAGENT_ERROR, "Winsock startup failed.");
+        return 0;
+    }
+
+    post_text_message(hwnd, WM_XPAGENT_STATUS, "Reconnecting...");
+    close_gateway_socket();
+    if (ensure_gateway_connection(error, sizeof(error)) != 0) {
+        post_text_message(hwnd, WM_XPAGENT_ERROR, error);
+        return 0;
+    }
+
+    post_text_message(hwnd, WM_XPAGENT_STATUS, "Gateway connected");
+    return 0;
+}
+
 static void handle_send(HWND hwnd)
 {
     gui_request *request;
@@ -638,6 +675,17 @@ static void handle_send(HWND hwnd)
     }
 
     HeapFree(GetProcessHeap(), 0, prompt_ui);
+}
+
+static LRESULT CALLBACK prompt_proc(HWND hwnd, UINT msg, WPARAM wparam,
+                                    LPARAM lparam)
+{
+    if (msg == WM_KEYDOWN && wparam == VK_RETURN &&
+        (GetKeyState(VK_CONTROL) & 0x8000)) {
+        handle_send(GetParent(hwnd));
+        return 0;
+    }
+    return CallWindowProc(g_prompt_proc, hwnd, msg, wparam, lparam);
 }
 
 static void set_font(HWND hwnd, HFONT font)
@@ -1606,9 +1654,9 @@ static void draw_status_bar(DRAWITEMSTRUCT *item)
     old_font = SelectObject(item->hDC, g_font);
     old_mode = SetBkMode(item->hDC, TRANSPARENT);
     SetTextColor(item->hDC, RGB(64, 64, 64));
-    draw_status_segment(item->hDC, &rc, 0, 96, g_status_bar_state);
-    draw_status_segment(item->hDC, &rc, 96, 220, "xpilot connected");
-    draw_status_segment(item->hDC, &rc, 220, rc.right,
+    draw_status_segment(item->hDC, &rc, 0, 150, g_status_bar_state);
+    draw_status_segment(item->hDC, &rc, 150, 274, "xpilot connected");
+    draw_status_segment(item->hDC, &rc, 274, rc.right,
                         g_gateway_connected ? "gateway connected" :
                         "gateway 10.0.2.2:7790");
     SetBkMode(item->hDC, old_mode);
@@ -1724,6 +1772,124 @@ static void add_list_item(HWND list, const char *text)
     SendMessage(list, LB_ADDSTRING, 0, (LPARAM)text);
 }
 
+static void clear_list(HWND list)
+{
+    if (list) {
+        SendMessage(list, LB_RESETCONTENT, 0, 0);
+    }
+}
+
+static void refresh_runtime_lists(void)
+{
+    char text[256];
+    char cwd[MAX_PATH];
+    char permission[80];
+    char model[80];
+
+    if (!g_env_list || !g_tasks_list || !g_changes_list) {
+        return;
+    }
+
+    cwd[0] = '\0';
+    GetCurrentDirectory(sizeof(cwd), cwd);
+    GetWindowText(g_access, permission, sizeof(permission));
+    GetWindowText(g_model, model, sizeof(model));
+
+    clear_list(g_env_list);
+    add_list_item(g_env_list,
+                  g_gateway_connected ? "Gateway connected" :
+                  "Gateway disconnected");
+    add_list_item(g_env_list, "xpilot connected via host");
+    wsprintf(text, "CWD %s", cwd[0] ? cwd : "(unknown)");
+    add_list_item(g_env_list, text);
+    wsprintf(text, "Permission %s", permission);
+    add_list_item(g_env_list, text);
+    wsprintf(text, "Model %s", model);
+    add_list_item(g_env_list, text);
+    wsprintf(text, "Messages %d", g_message_count);
+    add_list_item(g_env_list, text);
+
+    clear_list(g_tasks_list);
+    add_list_item(g_tasks_list,
+                  g_request_in_flight ? "Waiting for gateway reply" : "Idle");
+    add_list_item(g_tasks_list,
+                  g_gateway_connected ? "AG1 socket open" :
+                  "AG1 socket will connect on send");
+
+    clear_list(g_changes_list);
+    add_list_item(g_changes_list, "No edited files yet");
+    SetWindowText(g_changes_label, "Edited files (0)");
+    InvalidateRect(g_changes_label, NULL, TRUE);
+}
+
+static void reset_conversation(HWND hwnd)
+{
+    if (g_request_in_flight) {
+        set_runtime_status("Busy");
+        return;
+    }
+
+    close_gateway_socket();
+    g_next_request_id = 1;
+    g_message_count = 0;
+    g_gateway_connected = 0;
+    SetWindowText(g_transcript,
+                  "Ready for a new XPAgent conversation.\r\n\r\n"
+                  "Type a message below and click Send to talk to the host gateway.");
+    SetWindowText(g_prompt, "");
+    SetWindowText(g_thread_title, "New XPAgent chat");
+    SetWindowText(hwnd, "XPAgent - New chat");
+    set_request_in_flight(0);
+    set_runtime_status("Ready");
+    refresh_runtime_lists();
+}
+
+static void handle_reconnect(HWND hwnd)
+{
+    HANDLE thread;
+    DWORD thread_id;
+
+    if (g_request_in_flight) {
+        set_runtime_status("Busy");
+        return;
+    }
+
+    thread = CreateThread(NULL, 0, reconnect_worker, hwnd, 0, &thread_id);
+    if (!thread) {
+        append_transcript_message_ui("Error", "Could not start reconnect worker.");
+        set_runtime_status("Error");
+    } else {
+        CloseHandle(thread);
+    }
+}
+
+static void copy_focused_control(void)
+{
+    HWND focus;
+
+    focus = GetFocus();
+    if (focus) {
+        SendMessage(focus, WM_COPY, 0, 0);
+    }
+}
+
+static void select_all_focused_control(void)
+{
+    HWND focus;
+    char class_name[32];
+
+    focus = GetFocus();
+    if (!focus) {
+        return;
+    }
+
+    class_name[0] = '\0';
+    GetClassName(focus, class_name, sizeof(class_name));
+    if (lstrcmpi(class_name, "Edit") == 0) {
+        SendMessage(focus, EM_SETSEL, 0, -1);
+    }
+}
+
 static void show_choice_menu(HWND hwnd, HWND control, const char **items,
                              int count)
 {
@@ -1748,6 +1914,7 @@ static void show_choice_menu(HWND hwnd, HWND control, const char **items,
     if (command >= 4000 && command < 4000 + count) {
         SetWindowText(control, items[command - 4000]);
         InvalidateRect(control, NULL, TRUE);
+        refresh_runtime_lists();
     }
     DestroyMenu(menu);
 }
@@ -1856,20 +2023,9 @@ static void fill_static_content(void)
         "Type a message below and click Send to talk to the host gateway.";
     SetWindowText(g_transcript, sample);
 
-    add_list_item(g_changes_list, "guest/src/xpagent-gui.c          +305 -8");
-    add_list_item(g_changes_list, "guest/assets/icons/svg/send.svg   +15 -0");
-    add_list_item(g_changes_list, "scripts/render-icons.sh           +49 -0");
-
-    add_list_item(g_env_list, "Changes                         +187 -0");
-    add_list_item(g_env_list, "Local");
-    add_list_item(g_env_list, "main");
-    add_list_item(g_env_list, "Commit or push");
-    add_list_item(g_env_list, "Pull request status unavailable");
-
-    add_list_item(g_tasks_list, "./host/agent_gateway.py --backend codex");
-    add_list_item(g_tasks_list, "./xpilot_host.py");
-
     SetWindowText(g_prompt, "");
+    g_message_count = 0;
+    refresh_runtime_lists();
 }
 
 static void create_children(HWND hwnd)
@@ -1946,6 +2102,8 @@ static void create_children(HWND hwnd)
     set_font(g_user_badge, g_bold_font);
     SendMessage(g_transcript, EM_LIMITTEXT, EDIT_TEXT_LIMIT, 0);
     SendMessage(g_prompt, EM_LIMITTEXT, AG_MAX_MESSAGE - 512, 0);
+    g_prompt_proc = (WNDPROC)SetWindowLong(g_prompt, GWL_WNDPROC,
+                                           (LONG)prompt_proc);
 
     fill_static_content();
 }
@@ -2195,6 +2353,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
 
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
+        case ID_NEW_CHAT:
+        case 2001:
+            reset_conversation(hwnd);
+            return 0;
         case ID_SEND:
             handle_send(hwnd);
             return 0;
@@ -2213,6 +2375,19 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
             show_choice_menu(hwnd, g_model, items, 3);
             return 0;
         }
+        case 2003:
+            copy_focused_control();
+            return 0;
+        case 2004:
+            select_all_focused_control();
+            return 0;
+        case 2005:
+            refresh_runtime_lists();
+            set_runtime_status("Ready");
+            return 0;
+        case 2006:
+            handle_reconnect(hwnd);
+            return 0;
         case 2002:
             DestroyWindow(hwnd);
             return 0;

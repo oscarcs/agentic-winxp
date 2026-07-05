@@ -14,6 +14,13 @@ with real state, real gateway traffic, and a small set of useful actions.
   message to the backend.
 - Verified: built in the running XP guest with TinyCC and used `xpilot` to drive
   the live GUI controls through an echo gateway smoke test.
+- Done: New Chat, Copy, Select All, Refresh, and Reconnect commands now perform
+  real app actions.
+- Done: the right pane and status bar now show current GUI/runtime state for the
+  gateway socket, XP cwd, permission/model, task state, message count, and edited
+  files placeholder instead of static mock data.
+- Verified: rebuilt in XP and used `xpilot` harness checks for Send, New Chat,
+  and Reconnect.
 
 ## First Functional Slice
 
@@ -40,12 +47,12 @@ This is the smallest version that makes the GUI feel alive:
 
 ## Menu And Toolbar
 
-- `File > New Chat` and toolbar New Chat should reset the active conversation,
+- Done: `File > New Chat` and toolbar New Chat reset the active conversation,
   transcript, prompt, tasks, and edited files.
-- `Edit > Copy` and `Edit > Select All` should act on the focused control.
-- `View > Refresh` should reload project, environment, task, and changed-file
-  state.
-- `Tools > Reconnect` should close the current socket and reconnect to the host
+- Done: `Edit > Copy` and `Edit > Select All` act on the focused edit control.
+- Done: `View > Refresh` reloads the current environment, task, and changed-file
+  state. Project/thread refresh still needs host metadata.
+- Done: `Tools > Reconnect` closes the current socket and reconnects to the host
   gateway.
 - `Search`, `Scheduled`, and `Plugins` can stay disabled or mock until the core
   send/receive loop works.
@@ -100,16 +107,25 @@ This is the smallest version that makes the GUI feel alive:
 
 ## Right Pane
 
+- Basic done: Environment shows current cwd, gateway connection, active
+  permission/model profile, xpilot bridge assumption, and message count. Later it
+  should add branch and dirty file count from host state.
 - Environment should become live state: branch, dirty file count, current cwd,
   `xpilot` connection, gateway connection, and active permission/model profile.
+- Basic done: Tasks shows idle vs. waiting for gateway reply plus AG1 socket
+  state.
 - Tasks should show active operations: current Codex request, XP tool calls,
   builds, long-running commands, and gateway processes.
+- Basic done: Edited files is reset to an empty live placeholder until host-side
+  file/tool events exist.
 - Edited files should come from host-side file/tool events or `git diff --stat`.
 - Double-click behavior can come later: open a file in Notepad, show a diff, or
   fetch file contents through `xpilot`.
 
 ## Status Bar
 
+- Basic done: Status bar reflects current runtime status, xpilot bridge label,
+  and gateway address/connected state.
 - Keep this boring and useful:
   - Ready / Thinking / Error.
   - `xpilot` connected yes/no.
@@ -123,8 +139,8 @@ This is the smallest version that makes the GUI feel alive:
 1. Done: wire the GUI Send path to the host gateway.
 2. Done: add worker-thread status and transcript append events.
 3. Done: make permission and model picker values part of each request.
-4. Add reconnect and error recovery.
-5. Populate status bar and environment from real gateway state.
-6. Populate tasks and edited files from tool/gateway events.
+4. Done: add reconnect and error recovery.
+5. Basic done: populate status bar and environment from real gateway state.
+6. Basic done: populate tasks and edited files from GUI/gateway state.
 7. Add project/thread selection.
 8. Upgrade transcript rendering if plain `EDIT` becomes too limiting.
