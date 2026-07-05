@@ -25,6 +25,13 @@ with real state, real gateway traffic, and a small set of useful actions.
   it in the running XP instance, drove a Send smoke test through visible
   controls, captured a final screenshot, restored the Codex gateway on `7790`,
   and reconnected the running GUI to it.
+- Done: the left projects pane is now backed by a project/thread model. It
+  merges host-supplied project metadata, saves/restores per-thread transcripts,
+  supports project expand/collapse, and lets New Chat create a selectable thread.
+- Verified: built the project-pane GUI in XP, drove Send and project selection
+  through `xpilot`, confirmed transcript preservation across thread switches,
+  captured screenshots, rebuilt the installed `xpagent-gui.exe`, restored the
+  Codex gateway, and reconnected the running GUI.
 
 ## First Functional Slice
 
@@ -51,11 +58,11 @@ This is the smallest version that makes the GUI feel alive:
 
 ## Menu And Toolbar
 
-- Done: `File > New Chat` and toolbar New Chat reset the active conversation,
-  transcript, prompt, tasks, and edited files.
+- Done: `File > New Chat` and toolbar New Chat create and select a clean active
+  conversation while preserving existing threads.
 - Done: `Edit > Copy` and `Edit > Select All` act on the focused edit control.
-- Done: `View > Refresh` reloads the current environment, task, and changed-file
-  state. Project/thread refresh still needs host metadata.
+- Done: `View > Refresh` reloads the current environment, task, changed-file,
+  and host project/thread metadata.
 - Done: `Tools > Reconnect` closes the current socket and reconnects to the host
   gateway.
 - `Search`, `Scheduled`, and `Plugins` can stay disabled or mock until the core
@@ -65,10 +72,12 @@ This is the smallest version that makes the GUI feel alive:
 
 ## Left Pane
 
-- Replace the static projects list with a project/thread list model.
-- Have the host gateway provide project/thread metadata.
-- Selection should load the active transcript and metadata into the center pane.
-- Conversation age should be computed locally or supplied by the host.
+- Done: replace the static projects list with a project/thread list model.
+- Done: have the host gateway provide project/thread metadata over AG1
+  `PROJECTS` frames.
+- Done: selection loads the active transcript and metadata into the center pane.
+- Basic done: conversation age is supplied by the host for host threads and set
+  locally for GUI-created or recently used threads.
 
 ## Account And Usage
 
@@ -146,5 +155,5 @@ This is the smallest version that makes the GUI feel alive:
 4. Done: add reconnect and error recovery.
 5. Basic done: populate status bar and environment from real gateway state.
 6. Basic done: populate tasks and edited files from GUI/gateway state.
-7. Add project/thread selection.
+7. Done: add project/thread selection.
 8. Upgrade transcript rendering if plain `EDIT` becomes too limiting.

@@ -140,6 +140,49 @@ def split_gui_metadata(body):
     return message, metadata
 
 
+def clean_project_field(value):
+    value = str(value or "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    value = " ".join(value.split())
+    return value or "Untitled"
+
+
+def build_project_metadata(codex_cd, codex_session_file):
+    workspace = os.path.abspath(codex_cd or os.getcwd())
+    project_name = clean_project_field(os.path.basename(workspace) or "workspace")
+    rows = [f"PROJECT\t{project_name}\t1"]
+
+    thread_title = "XPAgent session"
+    try:
+        if codex_session_file and os.path.exists(codex_session_file):
+            with open(codex_session_file, "r", encoding="utf-8") as f:
+                thread_id = f.read().strip()
+            if thread_id:
+                thread_title = f"Codex thread {thread_id[:8]}"
+    except OSError:
+        pass
+    rows.append(f"THREAD\t{project_name}\t{clean_project_field(thread_title)}\tnow")
+
+    parent = os.path.dirname(workspace)
+    seen = {project_name.lower()}
+    try:
+        siblings = []
+        for name in os.listdir(parent):
+            path = os.path.join(parent, name)
+            if name.startswith(".") or not os.path.isdir(path):
+                continue
+            clean_name = clean_project_field(name)
+            if clean_name.lower() in seen:
+                continue
+            siblings.append(clean_name)
+        for name in sorted(siblings)[:9]:
+            seen.add(name.lower())
+            rows.append(f"PROJECT\t{name}\t0")
+    except OSError:
+        pass
+
+    return "\n".join(rows) + "\n"
+
+
 def command_works(command):
     try:
         result = subprocess.run(
@@ -397,6 +440,9 @@ class GatewayBackend:
             return self.respond_with_codex(user_text, session)
         raise RuntimeError(f"unsupported backend: {self.kind}")
 
+    def project_metadata(self, session):
+        return build_project_metadata(self.codex_cd, self.codex_session_file)
+
     def respond_with_codex(self, user_text, session):
         with self.lock:
             return self._respond_with_codex_locked(user_text, session)
@@ -647,6 +693,9 @@ def handle_client(conn, peer, backend):
             if frame_type == "BYE":
                 send_frame(conn, "BYE", frame_id, "bye")
                 return
+            if frame_type == "PROJECTS":
+                send_frame(conn, "PROJECTS", frame_id, backend.project_metadata(session))
+                continue
             if frame_type != "USER":
                 send_frame(conn, "ERROR", frame_id, f"unsupported frame: {frame_type}")
                 continue

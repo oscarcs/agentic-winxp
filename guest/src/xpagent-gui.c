@@ -20,10 +20,19 @@
 #define WM_XPAGENT_STATUS (WM_APP + 1)
 #define WM_XPAGENT_REPLY (WM_APP + 2)
 #define WM_XPAGENT_ERROR (WM_APP + 3)
+#define WM_XPAGENT_PROJECTS (WM_APP + 4)
 
 #define GATEWAY_HOST "10.0.2.2"
 #define GATEWAY_PORT 7790
 #define EDIT_TEXT_LIMIT 60000
+#define MAX_PROJECTS 16
+#define MAX_THREADS 32
+#define MAX_PROJECT_ROWS 64
+#define PROJECT_ROW_PROJECT 1
+#define PROJECT_ROW_THREAD 2
+#define DEFAULT_TRANSCRIPT \
+    "Ready for a new XPAgent conversation.\r\n\r\n" \
+    "Type a message below and click Send to talk to the host gateway."
 
 #define ID_NEW_CHAT 1001
 #define ID_SEARCH 1002
@@ -129,6 +138,20 @@ typedef struct gui_request {
     char body[AG_MAX_MESSAGE + 1];
 } gui_request;
 
+typedef struct project_model {
+    char name[64];
+    int expanded;
+} project_model;
+
+typedef struct conversation_model {
+    int project_index;
+    char title[128];
+    char age[32];
+    char transcript[EDIT_TEXT_LIMIT + 1];
+    char prompt[AG_MAX_MESSAGE + 1];
+    int message_count;
+} conversation_model;
+
 static SOCKET g_gateway_socket = INVALID_SOCKET;
 static CRITICAL_SECTION g_socket_lock;
 static int g_socket_lock_ready;
@@ -139,6 +162,13 @@ static int g_next_request_id = 1;
 static int g_message_count;
 static char g_status_bar_state[64] = "Ready";
 static WNDPROC g_prompt_proc;
+static project_model g_projects[MAX_PROJECTS];
+static conversation_model g_threads[MAX_THREADS];
+static int g_project_count;
+static int g_thread_count;
+static int g_active_project = -1;
+static int g_active_thread = -1;
+static int g_next_new_chat = 1;
 
 static void refresh_runtime_lists(void);
 static void handle_send(HWND hwnd);
@@ -146,6 +176,10 @@ static void reset_conversation(HWND hwnd);
 static void handle_reconnect(HWND hwnd);
 static void copy_focused_control(void);
 static void select_all_focused_control(void);
+static void populate_projects_list(void);
+static void save_active_conversation(void);
+static void request_project_metadata(HWND hwnd);
+static void retitle_active_conversation_from_prompt(const char *prompt);
 
 static char *heap_dup_text(const char *text)
 {
@@ -491,6 +525,12 @@ static void append_transcript_message_ui(const char *role, const char *text)
     edit_append_raw(g_transcript, ":\r\n");
     edit_append_normalized(g_transcript, text);
     g_message_count++;
+    if (g_active_thread >= 0 && g_active_thread < g_thread_count) {
+        lstrcpyn(g_threads[g_active_thread].age, "now",
+                 sizeof(g_threads[g_active_thread].age));
+    }
+    save_active_conversation();
+    populate_projects_list();
     refresh_runtime_lists();
 }
 
@@ -612,6 +652,45 @@ static DWORD WINAPI reconnect_worker(LPVOID param)
     return 0;
 }
 
+static DWORD WINAPI projects_worker(LPVOID param)
+{
+    HWND hwnd;
+    SOCKET s;
+    socket_transport socket_ctx;
+    ag_transport transport;
+    ag_message reply;
+
+    hwnd = (HWND)param;
+    if (!g_winsock_ready) {
+        post_text_message(hwnd, WM_XPAGENT_STATUS, "Projects unavailable");
+        return 0;
+    }
+
+    s = connect_tcp(GATEWAY_HOST, GATEWAY_PORT);
+    if (s == INVALID_SOCKET) {
+        post_text_message(hwnd, WM_XPAGENT_STATUS, "Projects unavailable");
+        return 0;
+    }
+
+    socket_ctx.socket = s;
+    transport.ctx = &socket_ctx;
+    transport.write_all = socket_write_all;
+    transport.read_line = socket_read_line;
+    transport.read_exact = socket_read_exact;
+
+    if (ag_send(&transport, "PROJECTS", g_next_request_id++, "", 0) != 0 ||
+        ag_recv(&transport, &reply) != 0 ||
+        lstrcmp(reply.type, "PROJECTS") != 0) {
+        closesocket(s);
+        post_text_message(hwnd, WM_XPAGENT_STATUS, "Projects unavailable");
+        return 0;
+    }
+
+    closesocket(s);
+    post_text_message(hwnd, WM_XPAGENT_PROJECTS, reply.body);
+    return 0;
+}
+
 static void handle_send(HWND hwnd)
 {
     gui_request *request;
@@ -659,8 +738,10 @@ static void handle_send(HWND hwnd)
     make_request_body(request->body, sizeof(request->body), prompt_utf8,
                       permission_ui, model_ui);
 
+    retitle_active_conversation_from_prompt(prompt_ui);
     append_transcript_message_ui("You", prompt_ui);
     SetWindowText(g_prompt, "");
+    save_active_conversation();
     set_request_in_flight(1);
     set_runtime_status("Connecting...");
 
@@ -1779,6 +1860,393 @@ static void clear_list(HWND list)
     }
 }
 
+static LPARAM encode_project_row(int type, int index)
+{
+    return (LPARAM)(((type & 0xff) << 16) | (index & 0xffff));
+}
+
+static int row_type(LPARAM data)
+{
+    return ((int)data >> 16) & 0xff;
+}
+
+static int row_index(LPARAM data)
+{
+    return (int)data & 0xffff;
+}
+
+static int add_project_row(const char *text, int type, int index)
+{
+    int row;
+
+    row = (int)SendMessage(g_projects_list, LB_ADDSTRING, 0, (LPARAM)text);
+    if (row >= 0) {
+        SendMessage(g_projects_list, LB_SETITEMDATA, row,
+                    encode_project_row(type, index));
+    }
+    return row;
+}
+
+static void set_default_conversation_text(char *out, int out_cap)
+{
+    lstrcpyn(out, DEFAULT_TRANSCRIPT, out_cap);
+}
+
+static int find_project_index(const char *name)
+{
+    int i;
+
+    for (i = 0; i < g_project_count; i++) {
+        if (lstrcmpi(g_projects[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int add_project_model(const char *name, int expanded)
+{
+    int index;
+
+    index = find_project_index(name);
+    if (index >= 0) {
+        g_projects[index].expanded = expanded || g_projects[index].expanded;
+        return index;
+    }
+    if (g_project_count >= MAX_PROJECTS) {
+        return -1;
+    }
+    index = g_project_count++;
+    lstrcpyn(g_projects[index].name, name, sizeof(g_projects[index].name));
+    g_projects[index].expanded = expanded;
+    return index;
+}
+
+static int find_thread_index(int project_index, const char *title)
+{
+    int i;
+
+    for (i = 0; i < g_thread_count; i++) {
+        if (g_threads[i].project_index == project_index &&
+            lstrcmpi(g_threads[i].title, title) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int add_thread_model(int project_index, const char *title,
+                            const char *age)
+{
+    int index;
+
+    if (project_index < 0 || project_index >= g_project_count) {
+        return -1;
+    }
+    index = find_thread_index(project_index, title);
+    if (index >= 0) {
+        if (age && age[0]) {
+            lstrcpyn(g_threads[index].age, age, sizeof(g_threads[index].age));
+        }
+        return index;
+    }
+    if (g_thread_count >= MAX_THREADS) {
+        return -1;
+    }
+    index = g_thread_count++;
+    ZeroMemory(&g_threads[index], sizeof(g_threads[index]));
+    g_threads[index].project_index = project_index;
+    lstrcpyn(g_threads[index].title, title, sizeof(g_threads[index].title));
+    lstrcpyn(g_threads[index].age, age && age[0] ? age : "now",
+             sizeof(g_threads[index].age));
+    set_default_conversation_text(g_threads[index].transcript,
+                                  sizeof(g_threads[index].transcript));
+    return index;
+}
+
+static void make_thread_row_text(int thread_index, char *out, int out_cap)
+{
+    char text[220];
+
+    wsprintf(text, "    %s        %s", g_threads[thread_index].title,
+             g_threads[thread_index].age);
+    lstrcpyn(out, text, out_cap);
+}
+
+static void populate_projects_list(void)
+{
+    int i;
+    int j;
+    int selected_row;
+    char text[256];
+
+    if (!g_projects_list) {
+        return;
+    }
+
+    clear_list(g_projects_list);
+    selected_row = -1;
+    for (i = 0; i < g_project_count; i++) {
+        wsprintf(text, "%s %s", g_projects[i].expanded ? "[-]" : "[+]",
+                 g_projects[i].name);
+        add_project_row(text, PROJECT_ROW_PROJECT, i);
+        if (!g_projects[i].expanded) {
+            continue;
+        }
+        for (j = 0; j < g_thread_count; j++) {
+            if (g_threads[j].project_index != i) {
+                continue;
+            }
+            make_thread_row_text(j, text, sizeof(text));
+            if (add_project_row(text, PROJECT_ROW_THREAD, j) >= 0 &&
+                j == g_active_thread) {
+                selected_row = (int)SendMessage(g_projects_list, LB_GETCOUNT,
+                                                0, 0) - 1;
+            }
+        }
+    }
+    if (selected_row >= 0) {
+        SendMessage(g_projects_list, LB_SETCURSEL, selected_row, 0);
+    }
+}
+
+static void save_active_conversation(void)
+{
+    conversation_model *thread;
+
+    if (g_active_thread < 0 || g_active_thread >= g_thread_count) {
+        return;
+    }
+    thread = &g_threads[g_active_thread];
+    if (g_transcript) {
+        GetWindowText(g_transcript, thread->transcript,
+                      sizeof(thread->transcript));
+    }
+    if (g_prompt) {
+        GetWindowText(g_prompt, thread->prompt, sizeof(thread->prompt));
+    }
+    thread->message_count = g_message_count;
+}
+
+static void load_conversation(HWND hwnd, int thread_index)
+{
+    conversation_model *thread;
+    char title[180];
+
+    if (thread_index < 0 || thread_index >= g_thread_count) {
+        return;
+    }
+
+    thread = &g_threads[thread_index];
+    g_active_thread = thread_index;
+    g_active_project = thread->project_index;
+    if (g_active_project >= 0 && g_active_project < g_project_count) {
+        g_projects[g_active_project].expanded = 1;
+    }
+    g_message_count = thread->message_count;
+    SetWindowText(g_transcript, thread->transcript);
+    SetWindowText(g_prompt, thread->prompt);
+    SetWindowText(g_thread_title, thread->title);
+    wsprintf(title, "XPAgent - %s", thread->title);
+    SetWindowText(hwnd, title);
+    populate_projects_list();
+    set_runtime_status("Ready");
+    refresh_runtime_lists();
+}
+
+static void retitle_active_conversation_from_prompt(const char *prompt)
+{
+    conversation_model *thread;
+    int len;
+    int i;
+
+    if (g_active_thread < 0 || g_active_thread >= g_thread_count || !prompt ||
+        !prompt[0]) {
+        return;
+    }
+    thread = &g_threads[g_active_thread];
+    if (lstrcmp(thread->title, "New XPAgent chat") != 0 &&
+        strncmp(thread->title, "New XPAgent chat ", 17) != 0) {
+        return;
+    }
+
+    len = lstrlen(prompt);
+    if (len > 52) {
+        len = 52;
+    }
+    for (i = 0; i < len; i++) {
+        if (prompt[i] == '\r' || prompt[i] == '\n') {
+            break;
+        }
+        thread->title[i] = prompt[i];
+    }
+    thread->title[i] = '\0';
+    if (thread->title[0] == '\0') {
+        lstrcpyn(thread->title, "New XPAgent chat", sizeof(thread->title));
+    }
+    SetWindowText(g_thread_title, thread->title);
+    if (g_thread_title) {
+        char title[180];
+        HWND parent;
+
+        parent = GetParent(g_thread_title);
+        wsprintf(title, "XPAgent - %s", thread->title);
+        if (parent) {
+            SetWindowText(parent, title);
+        }
+    }
+    populate_projects_list();
+}
+
+static void init_project_model(HWND hwnd)
+{
+    int project;
+    int thread;
+
+    g_project_count = 0;
+    g_thread_count = 0;
+    g_active_project = -1;
+    g_active_thread = -1;
+
+    project = add_project_model("winxp", 1);
+    thread = add_thread_model(project, "Set up Windows XP ISO", "2m");
+    add_project_model("win2k", 0);
+    project = add_project_model("powerstreet", 1);
+    add_thread_model(project, "Fix road junction markings", "1h");
+    add_thread_model(project, "Update project dependencies", "2d");
+    add_thread_model(project, "Refactor road modules", "2d");
+    add_project_model("firefox-ios", 0);
+    add_project_model("law-agent", 0);
+    add_project_model("tycoon", 0);
+
+    if (thread >= 0) {
+        load_conversation(hwnd, thread);
+    } else {
+        populate_projects_list();
+    }
+}
+
+static char *next_project_field(char **cursor)
+{
+    char *start;
+    char *tab;
+
+    start = *cursor;
+    tab = strchr(start, '\t');
+    if (tab) {
+        *tab = '\0';
+        *cursor = tab + 1;
+    } else {
+        *cursor = start + lstrlen(start);
+    }
+    return start;
+}
+
+static void apply_project_metadata(HWND hwnd, char *body)
+{
+    char *line;
+    char *next;
+    int loaded_active;
+
+    loaded_active = g_active_thread >= 0;
+    line = body;
+    while (line && *line) {
+        char *cursor;
+        char *kind;
+        char *project_name;
+        char *title;
+        char *age;
+        int project_index;
+
+        next = strchr(line, '\n');
+        if (next) {
+            *next = '\0';
+            next++;
+        }
+        if (line[0]) {
+            int n;
+
+            n = lstrlen(line);
+            while (n > 0 && (line[n - 1] == '\r' || line[n - 1] == ' ')) {
+                line[n - 1] = '\0';
+                n--;
+            }
+        }
+
+        cursor = line;
+        kind = next_project_field(&cursor);
+        if (lstrcmp(kind, "PROJECT") == 0) {
+            project_name = next_project_field(&cursor);
+            add_project_model(project_name, cursor[0] == '1');
+        } else if (lstrcmp(kind, "THREAD") == 0) {
+            project_name = next_project_field(&cursor);
+            title = next_project_field(&cursor);
+            age = cursor;
+            project_index = add_project_model(project_name, 1);
+            if (project_index >= 0) {
+                add_thread_model(project_index, title, age);
+            }
+        }
+
+        line = next;
+    }
+
+    if (!loaded_active && g_thread_count > 0) {
+        load_conversation(hwnd, 0);
+    } else {
+        populate_projects_list();
+    }
+    refresh_runtime_lists();
+}
+
+static void handle_project_selection(HWND hwnd)
+{
+    int row;
+    LPARAM data;
+    int type;
+    int index;
+
+    row = (int)SendMessage(g_projects_list, LB_GETCURSEL, 0, 0);
+    if (row < 0) {
+        return;
+    }
+    data = SendMessage(g_projects_list, LB_GETITEMDATA, row, 0);
+    type = row_type(data);
+    index = row_index(data);
+
+    if (g_request_in_flight) {
+        populate_projects_list();
+        set_runtime_status("Busy");
+        return;
+    }
+
+    if (type == PROJECT_ROW_PROJECT && index >= 0 && index < g_project_count) {
+        save_active_conversation();
+        g_projects[index].expanded = !g_projects[index].expanded;
+        g_active_project = index;
+        populate_projects_list();
+        return;
+    }
+
+    if (type == PROJECT_ROW_THREAD && index >= 0 && index < g_thread_count) {
+        if (index != g_active_thread) {
+            save_active_conversation();
+            load_conversation(hwnd, index);
+        }
+    }
+}
+
+static void request_project_metadata(HWND hwnd)
+{
+    HANDLE thread;
+    DWORD thread_id;
+
+    thread = CreateThread(NULL, 0, projects_worker, hwnd, 0, &thread_id);
+    if (thread) {
+        CloseHandle(thread);
+    }
+}
+
 static void refresh_runtime_lists(void)
 {
     char text[256];
@@ -1800,6 +2268,14 @@ static void refresh_runtime_lists(void)
                   g_gateway_connected ? "Gateway connected" :
                   "Gateway disconnected");
     add_list_item(g_env_list, "xpilot connected via host");
+    if (g_active_project >= 0 && g_active_project < g_project_count) {
+        wsprintf(text, "Project %s", g_projects[g_active_project].name);
+        add_list_item(g_env_list, text);
+    }
+    if (g_active_thread >= 0 && g_active_thread < g_thread_count) {
+        wsprintf(text, "Thread %s", g_threads[g_active_thread].title);
+        add_list_item(g_env_list, text);
+    }
     wsprintf(text, "CWD %s", cwd[0] ? cwd : "(unknown)");
     add_list_item(g_env_list, text);
     wsprintf(text, "Permission %s", permission);
@@ -1824,24 +2300,43 @@ static void refresh_runtime_lists(void)
 
 static void reset_conversation(HWND hwnd)
 {
+    int project;
+    int thread;
+    char title[128];
+
     if (g_request_in_flight) {
         set_runtime_status("Busy");
         return;
     }
 
+    save_active_conversation();
     close_gateway_socket();
     g_next_request_id = 1;
-    g_message_count = 0;
     g_gateway_connected = 0;
-    SetWindowText(g_transcript,
-                  "Ready for a new XPAgent conversation.\r\n\r\n"
-                  "Type a message below and click Send to talk to the host gateway.");
-    SetWindowText(g_prompt, "");
-    SetWindowText(g_thread_title, "New XPAgent chat");
-    SetWindowText(hwnd, "XPAgent - New chat");
-    set_request_in_flight(0);
-    set_runtime_status("Ready");
-    refresh_runtime_lists();
+
+    project = g_active_project;
+    if (project < 0 || project >= g_project_count) {
+        project = 0;
+    }
+    if (project < 0 || project >= g_project_count) {
+        project = add_project_model("winxp", 1);
+    }
+
+    if (g_next_new_chat == 1) {
+        lstrcpyn(title, "New XPAgent chat", sizeof(title));
+    } else {
+        wsprintf(title, "New XPAgent chat %d", g_next_new_chat);
+    }
+    g_next_new_chat++;
+
+    thread = add_thread_model(project, title, "now");
+    if (thread >= 0) {
+        g_threads[thread].message_count = 0;
+        g_threads[thread].prompt[0] = '\0';
+        set_default_conversation_text(g_threads[thread].transcript,
+                                      sizeof(g_threads[thread].transcript));
+        load_conversation(hwnd, thread);
+    }
 }
 
 static void handle_reconnect(HWND hwnd)
@@ -2002,30 +2497,9 @@ static void setup_menu(HWND hwnd)
     SetMenu(hwnd, menu);
 }
 
-static void fill_static_content(void)
+static void fill_initial_content(HWND hwnd)
 {
-    const char *sample;
-
-    add_list_item(g_projects_list, "[-] winxp");
-    add_list_item(g_projects_list, "    Set up Windows XP ISO        2m");
-    add_list_item(g_projects_list, "[+] win2k");
-    add_list_item(g_projects_list, "[-] powerstreet");
-    add_list_item(g_projects_list, "    Fix road junction markings  1h");
-    add_list_item(g_projects_list, "    Update project dependencies 2d");
-    add_list_item(g_projects_list, "    Refactor road modules       2d");
-    add_list_item(g_projects_list, "[+] firefox-ios");
-    add_list_item(g_projects_list, "[+] law-agent");
-    add_list_item(g_projects_list, "[+] tycoon");
-    SendMessage(g_projects_list, LB_SETCURSEL, 1, 0);
-
-    sample =
-        "Ready for a new XPAgent conversation.\r\n\r\n"
-        "Type a message below and click Send to talk to the host gateway.";
-    SetWindowText(g_transcript, sample);
-
-    SetWindowText(g_prompt, "");
-    g_message_count = 0;
-    refresh_runtime_lists();
+    init_project_model(hwnd);
 }
 
 static void create_children(HWND hwnd)
@@ -2105,7 +2579,7 @@ static void create_children(HWND hwnd)
     g_prompt_proc = (WNDPROC)SetWindowLong(g_prompt, GWL_WNDPROC,
                                            (LONG)prompt_proc);
 
-    fill_static_content();
+    fill_initial_content(hwnd);
 }
 
 static void move(HWND hwnd, int x, int y, int w, int h)
@@ -2261,6 +2735,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         create_children(hwnd);
         layout_children(hwnd);
         set_runtime_status("Ready");
+        request_project_metadata(hwnd);
         return 0;
 
     case WM_SIZE:
@@ -2282,6 +2757,11 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         append_transcript_message_utf8("Error", (const char *)lparam);
         set_runtime_status("Error");
         set_request_in_flight(0);
+        heap_free_text(lparam);
+        return 0;
+
+    case WM_XPAGENT_PROJECTS:
+        apply_project_metadata(hwnd, (char *)lparam);
         heap_free_text(lparam);
         return 0;
 
@@ -2353,6 +2833,11 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
 
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
+        case ID_PROJECTS_LIST:
+            if (HIWORD(wparam) == LBN_SELCHANGE) {
+                handle_project_selection(hwnd);
+            }
+            return 0;
         case ID_NEW_CHAT:
         case 2001:
             reset_conversation(hwnd);
@@ -2383,6 +2868,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
             return 0;
         case 2005:
             refresh_runtime_lists();
+            request_project_metadata(hwnd);
             set_runtime_status("Ready");
             return 0;
         case 2006:
