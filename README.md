@@ -1,42 +1,14 @@
 # Agentic WinXP
 
-Agentic WinXP is an experiment in making Windows XP a usable participant in
-modern agent workflows.
+Experiments in getting agents running on Windows XP.
+
+![screenshot](docs/screenshot.png)
 
 This involves two parts:
 - `xpilot`, which allows Codex or your MacOS LLM agent of choice to pilot XP.
-- An agent library (WIP) to allow XP to call modern LLMs.
+- An agent library and GUI to allow XP to call modern LLMs.
 
-## What Works
-
-- `xpilot.exe` runs inside Windows XP and connects out to the host.
-- `xpilot_host.py` accepts the guest connection and exposes a local control API.
-- `xpilotctl.py` gives the host a small shell for XP command and file operations.
-- `xpilot` can capture the rendered XP desktop as a BMP through the same bridge.
-- TinyCC builds XP-side Win32/Winsock programs directly in the guest.
-- `xpilot.exe` can start automatically after XP login and prints timestamped logs.
-- `xpagent` now has a portable C core with an XP console adapter and a native
-  Win32 GUI prototype.
-- The Codex-backed `xpagent` gateway can call XP tools through `xpilot`.
-
-## Current Shape
-
-```text
-macOS host
-  xpilot_host.py        listens on 127.0.0.1:7778 and 127.0.0.1:7780
-  xpilotctl.py          runs commands and moves files through the bridge
-  QEMU                  runs the XP guest
-
-Windows XP guest
-  xpilot.exe            connects to 10.0.2.2:7778
-  TinyCC                builds small Win32/Winsock tools
-  C:\agent              guest-side source and utilities
-```
-
-The guest makes outbound TCP connections to the host. That keeps XP away from
-modern internet requirements and avoids inbound guest networking.
-
-## Quick Start
+## Quickstart
 
 Prerequisites: QEMU, Python 3, and `curl`. On macOS with Homebrew:
 
@@ -44,89 +16,13 @@ Prerequisites: QEMU, Python 3, and `curl`. On macOS with Homebrew:
 brew install qemu
 ```
 
-For an already prepared local XP disk:
-
-```sh
-./xpilot_host.py
-./scripts/run-xp.sh
-```
-
-After XP logs in, the Startup-folder wrapper should launch `xpilot.exe`. Check
-the bridge from macOS:
-
-```sh
-./xpilotctl.py status
-./xpilotctl.py info
-./xpilotctl.py shell
-```
-
-Common commands:
-
-```sh
-./xpilotctl.py run 'ver'
-./xpilotctl.py ls 'C:\agent'
-./xpilotctl.py cat 'C:\agent\README-XP.txt'
-./xpilotctl.py put ./local.c 'C:\agent\local.c'
-./xpilotctl.py get 'C:\agent\src\xpilot.c' /tmp/xpilot.c
-./xpilotctl.py screenshot /tmp/xp-screen.bmp
-./xpilotctl.py putdir ./guest 'C:\agent\guest-copy'
-./xpilotctl.py getdir 'C:\agent' /tmp/agent-copy
-```
-
-## xpagent
-
-`xpagent` is the XP-native agent shell experiment. It uses a portable C core and
-thin platform adapters. Start the host gateway on macOS:
-
-```sh
-./host/agent_gateway.py --backend codex
-```
-
-The gateway shells out to `codex exec` on the host and stores the Codex thread
-id in `.state/xpagent-codex-thread.txt`, so later `xpagent` runs can resume the
-same conversation. Use `--codex-new-session` to start over. XP speaks only the
-small `AG1` protocol and never sees API keys or modern auth.
-
-With `--backend codex`, the gateway can also let Codex operate XP through the
-existing `xpilot` bridge. Initial tools include `xp.run`, `xp.list_dir`,
-`xp.read_file`, `xp.write_file`, and directory/file helpers. Disable that tool
-loop with `--disable-xp-tools`.
-
-Build and test it inside XP:
-
-```bat
-cd \agent
-build-xpagent.bat
-xpagent.exe
-```
-
-When testing tool-backed `xpagent` inside XP, launch it from an XP Command
-Prompt rather than through `xpilotctl run`; tool calls need the `xpilot` bridge
-to be free for nested command/file operations.
-
-The echo gateway is useful for offline protocol tests. The codex backend is the
-first real LLM wrapper. The XP console adapter converts command prompt text to
-UTF-8 before sending it to the host, then converts UTF-8 replies back to the XP
-console code page with a few common punctuation fallbacks.
-
-The Win32 GUI prototype is also built inside XP:
-
-```bat
-cd \agent
-build-xpagent-gui.bat
-start "" xpagent-gui.exe
-```
-
-## Fresh VM Setup
-
-The repository does not include Windows XP media, VM disks, snapshots, or
-generated transfer payloads. By default, `scripts/install-xp.sh` looks for:
+By default the scripts look for:
 
 ```text
 en_windows_xp_professional_with_service_pack_3_x86_cd_vl_x14-73974.iso
 ```
 
-Use that filename locally, or set `WINXP_ISO` when running the install script.
+Use that filename or set `WINXP_ISO` when running the install script.
 
 Create and install the VM:
 
@@ -141,9 +37,6 @@ Boot it later with:
 ```sh
 ./scripts/run-xp.sh
 ```
-
-The QEMU Cocoa window scales to fit by default. Use `--no-resize` for fixed-size
-display behavior.
 
 ## Build The XP Payload
 
@@ -182,37 +75,75 @@ To start it after login, copy `C:\agent\xpilot-startup.bat` to:
 C:\Documents and Settings\All Users\Start Menu\Programs\Startup
 ```
 
-## Repository Layout
+After XP logs in, the Startup-folder wrapper should launch `xpilot.exe`. Check
+the bridge from macOS:
 
-- `guest/src/` - XP-side C source.
-- `guest/build/` - batch wrappers packaged into `C:\agent`.
-- `guest/assets/` - GUI icon source and generated bitmap/icon assets.
-- `guest/startup/` - Startup-folder helper scripts.
-- `portable/` - platform-neutral `xpagent` core.
-- `host/` - host-side `xpagent` gateway.
-- `xpilot_host.py` - host bridge for the XP control connection.
-- `xpilotctl.py` - host CLI and interactive shell.
-- `scripts/` - QEMU, transfer, TinyCC download, and packaging helpers.
-- `docs/architecture.md` - short architecture and port map.
-- `host_gateway.py` - tiny legacy health endpoint used for early network tests.
+```sh
+./xpilotctl.py status
+./xpilotctl.py info
+./xpilotctl.py shell
+```
 
-Ignored local state:
+Common commands:
 
-- `*.iso`
-- `vm/`
-- `snapshots/`
-- `transfer/`
-- `build/`
+```sh
+./xpilotctl.py run 'ver'
+./xpilotctl.py ls 'C:\agent'
+./xpilotctl.py cat 'C:\agent\README-XP.txt'
+./xpilotctl.py put ./local.c 'C:\agent\local.c'
+./xpilotctl.py get 'C:\agent\src\xpilot.c' /tmp/xpilot.c
+./xpilotctl.py screenshot /tmp/xp-screen.bmp
+./xpilotctl.py putdir ./guest 'C:\agent\guest-copy'
+./xpilotctl.py getdir 'C:\agent' /tmp/agent-copy
+```
 
-## Goals
+## xpagent
 
-Near term, XP is a tool runtime for host-side agents:
+Start the host gateway on macOS:
+
+```sh
+./host/agent_gateway.py --backend codex
+```
+
+The gateway shells out to `codex exec` on the host and stores the Codex thread
+id in `.state/xpagent-codex-thread.txt`, so later `xpagent` runs can resume the
+same conversation. Use `--codex-new-session` to start over. XP speaks only the
+small `AG1` protocol and never sees API keys or modern auth.
+
+With `--backend codex`, the gateway can also let Codex operate XP through the
+existing `xpilot` bridge. Initial tools include `xp.run`, `xp.list_dir`,
+`xp.read_file`, `xp.write_file`, and directory/file helpers. Disable that tool
+loop with `--disable-xp-tools`.
+
+Build and test it inside XP:
+
+```bat
+cd \agent
+build-xpagent.bat
+xpagent.exe
+```
+
+When testing tool-backed `xpagent` inside XP, launch it from an XP Command
+Prompt rather than through `xpilotctl run`; tool calls need the `xpilot` bridge
+to be free for nested command/file operations.
+
+The Win32 GUI prototype is also built inside XP:
+
+```bat
+cd \agent
+build-xpagent-gui.bat
+start "" xpagent-gui.exe
+```
+
+## Architecture Overview
+
+XP can be used as a tool runtime for host-side agents:
 
 ```text
 host agent -> xpilotctl/xpilot_host -> xpilot.exe -> cmd/files/TinyCC in XP
 ```
 
-XP can now call a host-side Codex wrapper:
+XP can call a host-side Codex wrapper:
 
 ```text
 XP program -> AG1 over TCP to 10.0.2.2 -> host gateway -> codex exec
@@ -221,15 +152,8 @@ XP program -> AG1 over TCP to 10.0.2.2 -> host gateway -> codex exec
                                            xpilot API -> XP tools
 ```
 
-That direction is intentionally host-mediated. XP should not need modern TLS
-stacks, certificate stores, SDKs, API keys, or direct internet exposure.
+## Ports
 
-## Notes
-
-Useful local address from the XP guest:
-
-```text
-10.0.2.2
-```
-
-That is QEMU user networking's usual route back to the macOS host.
+- `7778`: raw `xpilot` guest-to-host control connection.
+- `7780`: local macOS HTTP API used by `xpilotctl.py`.
+- `7790`: `xpagent` guest-to-host agent gateway.
