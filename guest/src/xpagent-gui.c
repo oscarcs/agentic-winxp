@@ -30,6 +30,7 @@
 #define ID_ENV_LIST 1025
 #define ID_TASKS_LABEL 1026
 #define ID_TASKS_LIST 1027
+#define ID_USAGE_TEXT 1029
 #define ID_STATUS_BAR 1030
 #define ID_TOOLSTRIP 1031
 
@@ -80,6 +81,7 @@ static HWND g_projects_label;
 static HWND g_projects_list;
 static HWND g_user_badge;
 static HWND g_user_text;
+static HWND g_usage_text;
 static HWND g_transcript;
 static HWND g_changes_label;
 static HWND g_changes_list;
@@ -268,6 +270,13 @@ static int is_owner_button(int id)
            id == ID_ADD ||
            id == ID_MIC ||
            id == ID_SEND;
+}
+
+static int is_dropdown_button(int id)
+{
+    return id == ID_OPEN_IN ||
+           id == ID_ACCESS ||
+           id == ID_MODEL;
 }
 
 static int is_owner_list(int id)
@@ -687,7 +696,6 @@ static void draw_user_info(DRAWITEMSTRUCT *item)
 {
     RECT rc;
     RECT left_rc;
-    RECT right_rc;
     HGDIOBJ old_font;
     int old_mode;
 
@@ -710,13 +718,30 @@ static void draw_user_info(DRAWITEMSTRUCT *item)
     DrawText(item->hDC, "Pro", -1, &left_rc,
              DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
+    SetBkMode(item->hDC, old_mode);
+    SelectObject(item->hDC, old_font);
+}
+
+static void draw_usage_info(DRAWITEMSTRUCT *item)
+{
+    RECT rc;
+    RECT left_rc;
+    RECT right_rc;
+    HGDIOBJ old_font;
+    int old_mode;
+
+    rc = item->rcItem;
+    FillRect(item->hDC, &rc, g_bg_brush);
+
+    old_mode = SetBkMode(item->hDC, TRANSPARENT);
     SelectObject(item->hDC, g_small_font);
     SetTextColor(item->hDC, RGB(70, 70, 70));
 
-    left_rc.top += 17;
+    left_rc = rc;
+    left_rc.top += 1;
     left_rc.bottom = left_rc.top + 12;
     right_rc = left_rc;
-    right_rc.left = rc.left + 58;
+    right_rc.left = rc.left + 72;
     DrawText(item->hDC, "5h", -1, &left_rc, DT_LEFT | DT_SINGLELINE);
     DrawText(item->hDC, "8%  03:40", -1, &right_rc,
              DT_RIGHT | DT_SINGLELINE);
@@ -737,6 +762,96 @@ static void draw_user_info(DRAWITEMSTRUCT *item)
 
     SetBkMode(item->hDC, old_mode);
     SelectObject(item->hDC, old_font);
+}
+
+static void draw_dropdown_button(DRAWITEMSTRUCT *item)
+{
+    char text[80];
+    RECT rc;
+    RECT text_rc;
+    RECT arrow_rc;
+    POINT tri[3];
+    HPEN border;
+    HPEN sep;
+    HPEN highlight;
+    HPEN old_pen;
+    HBRUSH arrow_brush;
+    HBRUSH old_brush;
+    HGDIOBJ old_font;
+    int old_mode;
+    int selected;
+
+    selected = (item->itemState & ODS_SELECTED) != 0;
+    rc = item->rcItem;
+
+    fill_gradient(item->hDC, &rc,
+                  selected ? RGB(211, 226, 249) : RGB(255, 255, 255),
+                  selected ? RGB(188, 211, 244) : RGB(229, 239, 252));
+
+    border = CreatePen(PS_SOLID, 1, RGB(120, 151, 205));
+    highlight = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+    old_pen = (HPEN)SelectObject(item->hDC, border);
+    MoveToEx(item->hDC, rc.left, rc.top, NULL);
+    LineTo(item->hDC, rc.right - 1, rc.top);
+    LineTo(item->hDC, rc.right - 1, rc.bottom - 1);
+    LineTo(item->hDC, rc.left, rc.bottom - 1);
+    LineTo(item->hDC, rc.left, rc.top);
+    SelectObject(item->hDC, highlight);
+    MoveToEx(item->hDC, rc.left + 1, rc.top + 1, NULL);
+    LineTo(item->hDC, rc.right - 2, rc.top + 1);
+    MoveToEx(item->hDC, rc.left + 1, rc.top + 1, NULL);
+    LineTo(item->hDC, rc.left + 1, rc.bottom - 2);
+
+    arrow_rc = rc;
+    arrow_rc.left = rc.right - 22;
+    fill_gradient(item->hDC, &arrow_rc,
+                  selected ? RGB(195, 216, 247) : RGB(242, 247, 255),
+                  selected ? RGB(165, 196, 239) : RGB(206, 225, 250));
+    sep = CreatePen(PS_SOLID, 1, RGB(155, 178, 215));
+    SelectObject(item->hDC, sep);
+    MoveToEx(item->hDC, arrow_rc.left, arrow_rc.top + 2, NULL);
+    LineTo(item->hDC, arrow_rc.left, arrow_rc.bottom - 2);
+
+    arrow_brush = CreateSolidBrush(RGB(36, 78, 160));
+    old_brush = (HBRUSH)SelectObject(item->hDC, arrow_brush);
+    SelectObject(item->hDC, GetStockObject(NULL_PEN));
+    tri[0].x = arrow_rc.left + 7;
+    tri[0].y = arrow_rc.top + ((arrow_rc.bottom - arrow_rc.top) / 2) - 2;
+    tri[1].x = tri[0].x + 8;
+    tri[1].y = tri[0].y;
+    tri[2].x = tri[0].x + 4;
+    tri[2].y = tri[0].y + 5;
+    Polygon(item->hDC, tri, 3);
+
+    SelectObject(item->hDC, old_brush);
+    SelectObject(item->hDC, old_pen);
+    DeleteObject(arrow_brush);
+    DeleteObject(sep);
+    DeleteObject(highlight);
+    DeleteObject(border);
+
+    GetWindowText(item->hwndItem, text, sizeof(text));
+    text_rc = rc;
+    text_rc.left += 9;
+    text_rc.right = arrow_rc.left - 6;
+    if (selected) {
+        OffsetRect(&text_rc, 1, 1);
+    }
+    old_font = SelectObject(item->hDC, g_font);
+    old_mode = SetBkMode(item->hDC, TRANSPARENT);
+    SetTextColor(item->hDC, RGB(0, 0, 0));
+    DrawText(item->hDC, text, -1, &text_rc,
+             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetBkMode(item->hDC, old_mode);
+    SelectObject(item->hDC, old_font);
+
+    if (item->itemState & ODS_FOCUS) {
+        rc.left += 3;
+        rc.top += 3;
+        rc.right -= 3;
+        rc.bottom -= 3;
+        DrawFocusRect(item->hDC, &rc);
+    }
 }
 
 static void draw_button(DRAWITEMSTRUCT *item)
@@ -1066,9 +1181,32 @@ static void add_list_item(HWND list, const char *text)
     SendMessage(list, LB_ADDSTRING, 0, (LPARAM)text);
 }
 
-static void add_combo_item(HWND combo, const char *text)
+static void show_choice_menu(HWND hwnd, HWND control, const char **items,
+                             int count)
 {
-    SendMessage(combo, CB_ADDSTRING, 0, (LPARAM)text);
+    HMENU menu;
+    RECT rc;
+    int i;
+    int command;
+
+    menu = CreatePopupMenu();
+    if (!menu) {
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        AppendMenu(menu, MF_STRING, 4000 + i, items[i]);
+    }
+
+    GetWindowRect(control, &rc);
+    command = TrackPopupMenu(menu,
+                             TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                             rc.left, rc.bottom, 0, hwnd, NULL);
+    if (command >= 4000 && command < 4000 + count) {
+        SetWindowText(control, items[command - 4000]);
+        InvalidateRect(control, NULL, TRUE);
+    }
+    DestroyMenu(menu);
 }
 
 static void setup_fonts(void)
@@ -1196,21 +1334,6 @@ static void fill_static_content(void)
     add_list_item(g_tasks_list, "./host/agent_gateway.py --backend codex");
     add_list_item(g_tasks_list, "./xpilot_host.py");
 
-    add_combo_item(g_open_in, "Open in...");
-    add_combo_item(g_open_in, "Explorer");
-    add_combo_item(g_open_in, "Command Prompt");
-    SendMessage(g_open_in, CB_SETCURSEL, 0, 0);
-
-    add_combo_item(g_access, "Full access");
-    add_combo_item(g_access, "Read only");
-    add_combo_item(g_access, "Ask first");
-    SendMessage(g_access, CB_SETCURSEL, 0, 0);
-
-    add_combo_item(g_model, "5.5 Extra High");
-    add_combo_item(g_model, "5.5 High");
-    add_combo_item(g_model, "5.5 Fast");
-    SendMessage(g_model, CB_SETCURSEL, 0, 0);
-
     SetWindowText(g_prompt, "");
 }
 
@@ -1231,7 +1354,7 @@ static void create_children(HWND hwnd)
                                ID_SCHEDULED);
     g_plugins = make_control(hwnd, "BUTTON", "Plugins", BS_OWNERDRAW, 0,
                              ID_PLUGINS);
-    g_open_in = make_control(hwnd, "COMBOBOX", "", CBS_DROPDOWNLIST, 0,
+    g_open_in = make_control(hwnd, "BUTTON", "Open in...", BS_OWNERDRAW, 0,
                              ID_OPEN_IN);
     g_toolstrip = make_control(hwnd, "STATIC", "", SS_OWNERDRAW, 0,
                                ID_TOOLSTRIP);
@@ -1244,6 +1367,8 @@ static void create_children(HWND hwnd)
                                 ID_USER_BADGE);
     g_user_text = make_control(hwnd, "STATIC", "", SS_OWNERDRAW, 0,
                                ID_USER_TEXT);
+    g_usage_text = make_control(hwnd, "STATIC", "", SS_OWNERDRAW, 0,
+                                ID_USAGE_TEXT);
 
     g_thread_title = make_section_label(hwnd, "Set up Windows XP ISO",
                                         ID_THREAD_TITLE);
@@ -1263,9 +1388,10 @@ static void create_children(HWND hwnd)
                                 0,
                             WS_EX_CLIENTEDGE, ID_PROMPT);
     g_add = make_control(hwnd, "BUTTON", "+", BS_OWNERDRAW, 0, ID_ADD);
-    g_access = make_control(hwnd, "COMBOBOX", "", CBS_DROPDOWNLIST, 0,
+    g_access = make_control(hwnd, "BUTTON", "Full access", BS_OWNERDRAW, 0,
                             ID_ACCESS);
-    g_model = make_control(hwnd, "COMBOBOX", "", CBS_DROPDOWNLIST, 0, ID_MODEL);
+    g_model = make_control(hwnd, "BUTTON", "5.5 Extra High", BS_OWNERDRAW, 0,
+                           ID_MODEL);
     g_mic = make_control(hwnd, "BUTTON", "", BS_OWNERDRAW, 0, ID_MIC);
     g_send = make_control(hwnd, "BUTTON", "Send", BS_OWNERDRAW, 0, ID_SEND);
 
@@ -1320,6 +1446,11 @@ static void layout_children(HWND hwnd)
     int control_x;
     int right_section_h;
     int statusbar_h;
+    int footer_top;
+    int access_w;
+    int model_w;
+    int model_max_right;
+    int mic_x;
 
     GetClientRect(hwnd, &rc);
 
@@ -1350,21 +1481,22 @@ static void layout_children(HWND hwnd)
     move(g_search, margin + 88, toolbar_y, 76, 28);
     move(g_scheduled, margin + 170, toolbar_y, 92, 28);
     move(g_plugins, margin + 268, toolbar_y, 78, 28);
-    move(g_open_in, rc.right - margin - 150, toolbar_y, 150, 220);
+    move(g_open_in, rc.right - margin - 150, toolbar_y, 150, 28);
     move(g_toolstrip, 0, toolbar_y + toolbar_h, rc.right, 6);
 
     label_h = 24;
     footer_h = 94;
-    user_h = 80;
+    user_h = 86;
     row_y = content_y;
 
     move(g_projects_label, left_x, row_y, left_w, label_h);
     row_y += label_h;
     move(g_projects_list, left_x, row_y, left_w,
          content_y + content_h - row_y - footer_h - gap);
-    move(g_user_badge, left_x, content_y + content_h - user_h, 38, 38);
-    move(g_user_text, left_x + 48, content_y + content_h - user_h + 2,
-         left_w - 48, user_h);
+    footer_top = content_y + content_h - user_h;
+    move(g_user_badge, left_x, footer_top, 38, 38);
+    move(g_user_text, left_x + 48, footer_top + 2, left_w - 48, 38);
+    move(g_usage_text, left_x, footer_top + 44, left_w, 42);
 
     header_h = 26;
     status_h = 26;
@@ -1383,16 +1515,25 @@ static void layout_children(HWND hwnd)
     prompt_h = 44;
     move(g_prompt, center_x, row_y, center_w, prompt_h);
     row_y += prompt_h + 6;
-    bottom_row_h = 26;
+    bottom_row_h = 28;
     control_x = center_x;
     move(g_add, control_x, row_y, 30, bottom_row_h);
     control_x += 36;
-    move(g_access, control_x, row_y, 110, 160);
-    control_x += 116;
-    move(g_model, control_x, row_y, 115, 160);
-    control_x = center_x + center_w - 104;
-    move(g_mic, control_x, row_y, 34, bottom_row_h);
-    move(g_send, control_x + 40, row_y, 64, bottom_row_h);
+    access_w = 104;
+    move(g_access, control_x, row_y, access_w, bottom_row_h);
+    control_x += access_w + 6;
+    mic_x = center_x + center_w - 104;
+    model_max_right = mic_x - 8;
+    model_w = model_max_right - control_x;
+    if (model_w > 150) {
+        model_w = 150;
+    }
+    if (model_w < 116) {
+        model_w = 116;
+    }
+    move(g_model, control_x, row_y, model_w, bottom_row_h);
+    move(g_mic, mic_x, row_y, 34, bottom_row_h);
+    move(g_send, mic_x + 40, row_y, 64, bottom_row_h);
 
     right_section_h = (content_h - (label_h * 3) - (gap * 2)) / 3;
     row_y = content_y;
@@ -1442,6 +1583,14 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
         }
         if (draw_item && draw_item->CtlID == ID_USER_TEXT) {
             draw_user_info(draw_item);
+            return TRUE;
+        }
+        if (draw_item && draw_item->CtlID == ID_USAGE_TEXT) {
+            draw_usage_info(draw_item);
+            return TRUE;
+        }
+        if (draw_item && is_dropdown_button((int)draw_item->CtlID)) {
+            draw_dropdown_button(draw_item);
             return TRUE;
         }
         if (draw_item && is_owner_button((int)draw_item->CtlID)) {
@@ -1496,6 +1645,21 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam,
                        "XPAgent",
                        MB_OK | MB_ICONINFORMATION);
             return 0;
+        case ID_OPEN_IN: {
+            const char *items[] = {"Open in...", "Explorer", "Command Prompt"};
+            show_choice_menu(hwnd, g_open_in, items, 3);
+            return 0;
+        }
+        case ID_ACCESS: {
+            const char *items[] = {"Full access", "Read only", "Ask first"};
+            show_choice_menu(hwnd, g_access, items, 3);
+            return 0;
+        }
+        case ID_MODEL: {
+            const char *items[] = {"5.5 Extra High", "5.5 High", "5.5 Fast"};
+            show_choice_menu(hwnd, g_model, items, 3);
+            return 0;
+        }
         case 2002:
             DestroyWindow(hwnd);
             return 0;
